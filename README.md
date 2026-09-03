@@ -54,3 +54,6 @@ curl -X PUT \
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+---
+_Last verified auto-deploy: 2026-09-03 03:05 UTC_
