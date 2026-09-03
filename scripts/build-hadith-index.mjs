@@ -3,7 +3,10 @@
  *
  *   npm run build:index
  *   node scripts/build-hadith-index.mjs [--book <id>] [--from=1] [--to=N] [--step=1]
- *                                       [--delay=250] [--dry-run] [--force] [--tafsir <id>]
+ *                                       [--delay=250] [--dry-run] [--force]
+ *
+ *   (Tafsir books have their own index and builder: scripts/build-tafsir-index.mjs
+ *    → src/data/tafsir-index.mjs. `--tafsir` here just forwards you there.)
  *
  * HOW (hadith books):
  *   For every hadith number n in [from, to] ask shamela's own lookup
@@ -18,12 +21,8 @@
  *   Use --step to sample (e.g. --step=50 for a smoke run) and --from/--to to
  *   resume; existing entries are merged, never dropped.
  *
- * HOW (tafsir books, --tafsir <id>):
- *   Walk each «تفسير سورة X» TOC chapter page-by-page and record the first page
- *   on which each ayah's «﴿…(n)…﴾» marker appears.
- *
- * Which books: whitelisted canonical ids in src/data/canonical-book-ids.mjs
- * (all hadith editions) unless --book/--tafsir narrows it.
+ * Which books: whitelisted canonical hadith ids in src/data/canonical-book-ids.mjs
+ * unless --book narrows it.
  *
  * Output: src/data/hadith-index.mjs (merge). Never overwrites with an empty
  * result unless --force.
@@ -34,7 +33,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHttp } from "../src/lib/http.mjs";
 import { createClient } from "../src/lib/shamela.mjs";
-import { detectHadithMarkers, surahFromHeading, detectQuranBracketAyahs, AYAH_COUNTS } from "../src/lib/citation-detect.mjs";
+import { detectHadithMarkers } from "../src/lib/citation-detect.mjs";
 import existingIndex from "../src/data/hadith-index.mjs";
 import canonicalBookIds from "../src/data/canonical-book-ids.mjs";
 
@@ -52,26 +51,24 @@ const FROM = opt("from", 1);
 const TO = opt("to", 0); // 0 → edition's last_number
 const STEP = Math.max(1, opt("step", 1));
 const DELAY_MS = opt("delay", 250);
-const MAX_PAGES_PER_SURAH = opt("max-pages", 400);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const list = (flag) => args.flatMap((a, i) => (a === flag && /^\d+$/.test(args[i + 1] ?? "") ? [args[i + 1]] : []));
 
 const editions = Object.entries(canonicalBookIds?.editions ?? {}).map(([key, rec]) => ({ key, ...rec }));
 const explicitBooks = list("--book");
-const explicitTafsir = list("--tafsir");
+if (args.includes("--tafsir")) {
+  console.error("✖ Tafsir books are indexed by scripts/build-tafsir-index.mjs (npm run build:tafsir -- --tafsir <id>).");
+  process.exit(1);
+}
 
 const hadithTargets = editions
   .filter((e) => e.type === "hadith")
-  .filter((e) => (explicitBooks.length ? explicitBooks.includes(String(e.book_id)) : !explicitTafsir.length))
+  .filter((e) => (explicitBooks.length ? explicitBooks.includes(String(e.book_id)) : true))
   .concat(explicitBooks.filter((id) => !editions.some((e) => String(e.book_id) === id)).map((id) => ({ key: null, book_id: id, type: "hadith" })));
-const tafsirTargets = editions
-  .filter((e) => e.type === "tafsir")
-  .filter((e) => (explicitTafsir.length ? explicitTafsir.includes(String(e.book_id)) : !explicitBooks.length && false))
-  .concat(explicitTafsir.filter((id) => !editions.some((e) => String(e.book_id) === id)).map((id) => ({ key: null, book_id: id, type: "tafsir" })));
 
-if (!hadithTargets.length && !tafsirTargets.length) {
-  console.error("✖ Nothing to index. Pass --book <id> and/or --tafsir <id>, or populate src/data/canonical-book-ids.mjs.");
+if (!hadithTargets.length) {
+  console.error("✖ Nothing to index. Pass --book <id>, or populate src/data/canonical-book-ids.mjs.");
   process.exit(1);
 }
 
@@ -155,49 +152,7 @@ for (const ed of hadithTargets) {
   console.log(`   ✔ ${verified} verified, ${unverified} unverified (kept with note), ${missing} numbers not found by shamela`);
 }
 
-for (const ed of tafsirTargets) {
-  const bookId = String(ed.book_id);
-  console.log(`\n== ${bookId} ${ed.title ?? ""} — tafsir ayah map ==`);
-  const d = await retry(() => client.details(bookId));
-  const chapters = d.toc
-    .map((t) => ({ surah: surahFromHeading(t.title), page: /\/book\/\d+\/(\d+)/.exec(t.href)?.[1] }))
-    .filter((c) => c.surah && c.page);
-  const prev = index.books[bookId]?.type === "tafsir" ? index.books[bookId] : { type: "tafsir", ayahs: {} };
-  const ayahs = { ...prev.ayahs };
-  for (let i = 0; i < chapters.length; i += 1) {
-    const { surah, page: start } = chapters[i];
-    const stop = chapters.slice(i + 1).find((c) => Number(c.page) > Number(start))?.page;
-    let page = start;
-    let walked = 0;
-    let seen = 0;
-    while (page && walked < MAX_PAGES_PER_SURAH && !(stop && Number(page) >= Number(stop))) {
-      let pd;
-      try {
-        pd = await retry(() => client.bookPage(bookId, page));
-      } catch (e) {
-        console.error(`   ! page ${page}: ${e.message}`);
-        break;
-      }
-      const marks = detectQuranBracketAyahs(pd.paragraphs, surah);
-      for (const a of marks) {
-        const key = `${surah}:${a}`;
-        if (!ayahs[key]) {
-          ayahs[key] = { page };
-          newEntries += 1;
-        }
-      }
-      if (marks.length) seen = Math.max(seen, marks[marks.length - 1]);
-      if (seen >= (AYAH_COUNTS[surah] ?? 0)) break;
-      page = pd.nav?.next ?? null;
-      walked += 1;
-      await sleep(DELAY_MS);
-    }
-    console.log(`   surah ${surah}: ${seen}/${AYAH_COUNTS[surah]} ayahs reached in ${walked} pages`);
-  }
-  index.books[bookId] = { type: "tafsir", ...(ed.key ? { key: ed.key } : {}), ayahs };
-}
-
-const total = Object.values(index.books).reduce((n, b) => n + Object.keys(b.index ?? b.ayahs ?? {}).length, 0);
+const total = Object.values(index.books).reduce((n, b) => n + Object.keys(b.index ?? {}).length, 0);
 console.log(`\nIndex: ${Object.keys(index.books).length} book(s), ${total} entries (${newEntries} touched this run).`);
 
 if (!newEntries && !FORCE) {

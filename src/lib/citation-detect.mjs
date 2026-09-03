@@ -125,6 +125,138 @@ export function extractHadith(paragraphs, hadithNumber) {
 }
 
 // ---------------------------------------------------------------------------
+// Editorial gradings (al-Albani)
+// ---------------------------------------------------------------------------
+
+/**
+ * Albani's verdict as printed by the shamela editions of the Sunan:
+ *   Tirmidhi 1435   footnote «[حكم الألباني] : صحيح»
+ *   Abu Dawud 1726  footnote «[حكم الألباني] : حسن صحيح»
+ *   Ibn Majah 1198  footnote «[حكم الألباني]» + line break + «صحيح»
+ *   (some prints)   footnote «قال الألباني: ضعيف» / «قال الشيخ الألباني: …»
+ *
+ * ONLY these explicit attributions count. Tirmidhi's own «هذا حديث حسن صحيح»,
+ * a muhaqqiq's «إسناده صحيح», or prose mentioning الألباني are never turned
+ * into a grading — returns [] rather than a guess.
+ *
+ * Verdict text: everything after the label up to the end of that line/entry
+ * («صحيح دون قوله …» is kept whole). `verdict_class` folds it to one of
+ * sahih | hasan_sahih | hasan | daif | mawdu | other for filtering.
+ */
+const ALBANI_LABEL_RE = /\[\s*حكم\s+الألباني\s*\]\s*[:：]?\s*([^\n]*)/u;
+const ALBANI_SAID_RE = /(?:^|\n|[.،;؛]\s*)قال\s+(?:الشيخ\s+)?(?:محمد\s+ناصر\s+الدين\s+)?الألباني\s*(?:رحمه الله\s*)?[:：]\s*([^\n]+)/u;
+
+function classifyVerdict(v) {
+  const t = normalizeArabic(v).replace(/^(?:حديث|هذا حديث)\s+/, "");
+  if (!t) return "other";
+  if (/^موضوع/.test(t)) return "mawdu";
+  if (/^حسن صحيح/.test(t)) return "hasan_sahih";
+  if (/^(ضعيف|منكر|شاذ|باطل|لا اصل له|ليس بصحيح|مضطرب|معلول|معل\b)/.test(t)) return "daif";
+  if (/^حسن/.test(t)) return "hasan";
+  if (/^صحيح/.test(t)) return "sahih";
+  if (/^(اسناده|سنده)\s+(صحيح|حسن|ضعيف)/.test(t)) return RegExp.$2 === "صحيح" ? "sahih" : RegExp.$2 === "حسن" ? "hasan" : "daif";
+  return "other";
+}
+
+/**
+ * All explicit Albani gradings printed on a page.
+ * @param {string[]} footnotes  `parseBookPage().footnotes` (p.hamesh)
+ * @param {string[]} [paragraphs] main paragraphs — only the bracketed label
+ *   «[حكم الألباني]» is honoured there (a few prints put it inline).
+ * @returns {{grader:string, verdict:string, verdict_class:string, raw:string, where:"footnote"|"text", index:number}[]}
+ */
+export function extractGradings(footnotes, paragraphs = []) {
+  const out = [];
+  const scan = (text, where, index, allowSaid) => {
+    const src = String(text ?? "");
+    if (!src) return;
+    // A footnote block may hold several «(١) … (٢) …» entries on separate lines;
+    // handle each line so the verdict never swallows the next entry.
+    const m = ALBANI_LABEL_RE.exec(src);
+    if (m) {
+      let verdict = m[1].trim();
+      if (!verdict) {
+        // «[حكم الألباني]» alone on its line → the verdict is the next non-empty line (Ibn Majah 1198).
+        const after = src.slice(m.index + m[0].length).split("\n").map((l) => l.trim()).find(Boolean) ?? "";
+        verdict = after;
+      }
+      verdict = verdict.replace(/^[\s:：\-–]+/, "").replace(new RegExp(`\\s*\\(${DIGITS}+\\)\\s*$`), "").trim();
+      if (verdict) out.push({ grader: "الألباني", verdict, verdict_class: classifyVerdict(verdict), raw: src.trim(), where, index });
+      return;
+    }
+    if (!allowSaid) return;
+    const q = ALBANI_SAID_RE.exec(src);
+    if (q) {
+      const verdict = q[1].replace(/[.،;؛]\s*$/, "").trim();
+      if (verdict && classifyVerdict(verdict) !== "other") out.push({ grader: "الألباني", verdict, verdict_class: classifyVerdict(verdict), raw: src.trim(), where, index });
+    }
+  };
+  (Array.isArray(footnotes) ? footnotes : []).forEach((f, i) => scan(f, "footnote", i, true));
+  (Array.isArray(paragraphs) ? paragraphs : []).forEach((p, i) => scan(p, "text", i, false));
+  return out;
+}
+
+/**
+ * The grading that belongs to ONE hadith on a page, or null.
+ *
+ * Pages usually carry one hadith and one «[حكم الألباني]». When a page holds
+ * several hadiths the editions print one verdict line per hadith in order; that
+ * order mapping is exposed as `attribution: "by_order_on_page"` and only used
+ * when the counts match exactly. Otherwise `grading` is null and the caller
+ * gets the raw list in `gradings_on_page` — never a guessed assignment.
+ *
+ * @param {object} args
+ * @param {string[]} args.footnotes
+ * @param {string[]} [args.paragraphs]
+ * @param {string[]} [args.numbersOnPage]  hadith numbers printed on the page, in order
+ * @param {string}   [args.hadithNumber]
+ */
+export function gradingForHadith({ footnotes, paragraphs = [], numbersOnPage = [], hadithNumber } = {}) {
+  const all = extractGradings(footnotes, paragraphs);
+  if (!all.length) return { grading: null, gradings_on_page: [] };
+  const pick = (g, attribution) => ({
+    grading: { grader: g.grader, verdict: g.verdict, verdict_class: g.verdict_class, raw: g.raw, attribution },
+    gradings_on_page: all.map((x) => ({ verdict: x.verdict, verdict_class: x.verdict_class, where: x.where })),
+  });
+  const distinct = [...new Set(numbersOnPage.map(String))];
+  if (all.length === 1 && distinct.length <= 1) return pick(all[0], "only_grading_on_page");
+  if (hadithNumber != null && distinct.length === all.length) {
+    const pos = distinct.indexOf(String(hadithNumber));
+    if (pos >= 0) return pick(all[pos], "by_order_on_page");
+  }
+  return {
+    grading: null,
+    gradings_on_page: all.map((x) => ({ verdict: x.verdict, verdict_class: x.verdict_class, where: x.where })),
+    grading_note: `পৃষ্ঠায় ${all.length}টি আলবানী-হুকুম ও ${distinct.length}টি হাদিস — কোনটি এই হাদিসের তা নিশ্চিত নয়; gradings_on_page দেখুন।`,
+  };
+}
+
+/**
+ * Grading for a hadith that may run across several pages. Each page is judged
+ * on its own (its footnotes vs. the hadith numbers printed on it); on a
+ * continuation page the running hadith counts as the first number. The first
+ * page that yields an unambiguous grading wins.
+ *
+ * @param {{page:string, footnotes:string[], paragraphs?:string[], numbers:string[]}[]} pages
+ * @param {string} hadithNumber
+ */
+export function gradingAcrossPages(pages, hadithNumber) {
+  const num = String(hadithNumber);
+  const all = [];
+  let note;
+  for (let i = 0; i < (pages ?? []).length; i += 1) {
+    const pg = pages[i];
+    const numbers = [...new Set(pg.numbers ?? [])];
+    if (i > 0 && !numbers.includes(num)) numbers.unshift(num);
+    const r = gradingForHadith({ footnotes: pg.footnotes, paragraphs: pg.paragraphs, numbersOnPage: numbers, hadithNumber: num });
+    all.push(...r.gradings_on_page.map((g) => ({ ...g, page: pg.page })));
+    if (r.grading) return { grading: { ...r.grading, page: pg.page }, gradings_on_page: all };
+    if (r.grading_note) note = r.grading_note;
+  }
+  return { grading: null, gradings_on_page: all, ...(note ? { grading_note: note } : {}) };
+}
+
+// ---------------------------------------------------------------------------
 // Qur'an references
 // ---------------------------------------------------------------------------
 
@@ -147,16 +279,28 @@ export const SURAH_NAMES = [
   [51, "الذاريات"], [52, "الطور"], [53, "النجم"], [54, "القمر"], [55, "الرحمن"],
   [56, "الواقعة"], [57, "الحديد"], [58, "المجادلة"], [59, "الحشر"], [60, "الممتحنة"],
   [61, "الصف"], [62, "الجمعة"], [63, "المنافقون"], [64, "التغابن"], [65, "الطلاق"],
-  [66, "التحريم"], [67, "الملك", "تبارك"], [68, "القلم", "ن"], [69, "الحاقة"], [70, "المعارج"],
+  [66, "التحريم"], [67, "الملك", "تبارك"], [68, "القلم", "ن"], [69, "الحاقة"], [70, "المعارج", "سأل سائل"],
   [71, "نوح"], [72, "الجن"], [73, "المزمل"], [74, "المدثر"], [75, "القيامة"],
   [76, "الإنسان", "الدهر"], [77, "المرسلات"], [78, "النبأ", "عم"], [79, "النازعات"], [80, "عبس"],
   [81, "التكوير"], [82, "الانفطار"], [83, "المطففين", "التطفيف"], [84, "الانشقاق"], [85, "البروج"],
-  [86, "الطارق"], [87, "الأعلى"], [88, "الغاشية"], [89, "الفجر"], [90, "البلد"],
-  [91, "الشمس"], [92, "الليل"], [93, "الضحى"], [94, "الشرح", "الانشراح", "ألم نشرح"], [95, "التين"],
-  [96, "العلق", "اقرأ"], [97, "القدر"], [98, "البينة", "لم يكن"], [99, "الزلزلة", "الزلزال"], [100, "العاديات"],
-  [101, "القارعة"], [102, "التكاثر"], [103, "العصر"], [104, "الهمزة"], [105, "الفيل"],
-  [106, "قريش", "لإيلاف"], [107, "الماعون"], [108, "الكوثر"], [109, "الكافرون"], [110, "النصر"],
+  [86, "الطارق"], [87, "الأعلى", "سبح", "سبح اسم ربك الأعلى"], [88, "الغاشية"], [89, "الفجر"], [90, "البلد"],
+  [91, "الشمس", "والشمس وضحاها", "الشمس وضحاها"], [92, "الليل", "والليل إذا يغشى"], [93, "الضحى", "والضحى"],
+  [94, "الشرح", "الانشراح", "ألم نشرح"], [95, "التين", "والتين والزيتون", "التين والزيتون"],
+  [96, "العلق", "اقرأ"], [97, "القدر"], [98, "البينة", "لم يكن"], [99, "الزلزلة", "الزلزال", "إذا زلزلت"], [100, "العاديات"],
+  [101, "القارعة"], [102, "التكاثر"], [103, "العصر"], [104, "الهمزة", "ويل لكل همزة", "ويل لكل همزة لمزة"], [105, "الفيل"],
+  [106, "قريش", "لإيلاف", "لإيلاف قريش"], [107, "الماعون"], [108, "الكوثر"], [109, "الكافرون", "قل يا أيها الكافرون"],
+  [110, "النصر", "إذا جاء نصر الله", "إذا جاء نصر الله والفتح"],
   [111, "المسد", "اللهب", "تبت"], [112, "الإخلاص", "التوحيد"], [113, "الفلق"], [114, "الناس"],
+];
+
+/**
+ * Headings that cover MORE than one surah. Ibn Kathir (8473) prints
+ * «تفسير سورتي المعوذتين» once for al-Falaq + al-Nas (al-Nas still gets its
+ * own TOC entry, but other editions may not).
+ */
+export const MULTI_SURAH_HEADINGS = [
+  ["المعوذتين", [113, 114]],
+  ["الفلق والناس", [113, 114]],
 ];
 
 /** normalized name/alias → surah number */
@@ -184,13 +328,13 @@ export const AYAH_COUNTS = [
 ];
 export const MAX_AYAH = 286;
 
-/** Resolve a surah name fragment (up to 3 words) → number, or 0. */
+/** Resolve a surah name fragment (longest prefix first, up to 6 words) → number, or 0. */
 function lookupSurah(raw, { allowSingleLetter = false } = {}) {
-  const words = normalizeArabic(String(raw).replace(/[:：()[\]،.;\-]/g, " ").replace(/(ال)?آي[ةه]/g, " "))
+  const words = normalizeArabic(String(raw).replace(/[:：()[\]«»"“”،.;\-]/g, " ").replace(/(ال)?آي[ةه]/g, " "))
     .split(/\s+/)
     .filter(Boolean)
     .filter((w, i) => !(i === 0 && w === "سوره"));
-  for (let len = Math.min(words.length, 3); len >= 1; len -= 1) {
+  for (let len = Math.min(words.length, 6); len >= 1; len -= 1) {
     const key = words.slice(0, len).join(" ");
     const n = SURAH_BY_NAME.get(key);
     if (n && (allowSingleLetter || !SINGLE_LETTER.has(key))) return n;
@@ -198,16 +342,79 @@ function lookupSurah(raw, { allowSingleLetter = false } = {}) {
   return 0;
 }
 
+const MULTI_BY_NAME = new Map(MULTI_SURAH_HEADINGS.map(([name, list]) => [normalizeArabic(name), list]));
+
 /**
- * Surah number from a chapter heading such as «تفسير سورة آل عمران»,
- * «سورة النور», «[سورة ص]», «تفسير سورة إبراهيم ﵇». Single-letter names are
- * allowed here because a heading is unambiguous. Returns 0 if not a surah heading.
+ * All surah numbers a chapter heading refers to (usually one).
+ *
+ * Verified against the real TOC of Ibn Kathir 8473 (2026-09-03), which uses
+ * every one of these shapes:
+ *   «تفسير سورة آل عمران»      «سورة النور» (no تفسير)      «فاتحة الكتاب» (no سورة!)
+ *   «تفسير سورة إبراهيم ﵇»    «تفسير سورة مريم [﵍]»       «تفسير سورة فاطر وهي مكية»
+ *   «تفسير سورة "ن"»           «تفسير سورة سأل سائل»       «تفسير سورة قل يا أيها الكافرون»
+ *   «تفسير السورة التي يذكر فيها الماعون»   «تفسير سورتي المعوذتين»
+ * Single-letter names (ص، ق، ن) are allowed because a heading is unambiguous.
+ * Returns [] when the title is not a surah heading — never a guess.
+ */
+export function surahsFromHeading(title) {
+  const t = normalizeArabic(String(title ?? "").replace(/[[\]()«»"“”﵇﵍﵊﵌]/g, " "));
+  if (!t) return [];
+
+  // «سورتي المعوذتين» / «سورتا الفلق والناس»
+  const multi = /(?:^|\s)سورت[يا]\s+(.+)$/.exec(t);
+  if (multi) {
+    const key = normalizeArabic(multi[1]).split(/\s+/).slice(0, 3).join(" ");
+    for (const [name, list] of MULTI_BY_NAME) if (key.startsWith(name)) return list;
+    return [];
+  }
+
+  // «… السورة التي يذكر فيها الماعون»
+  const described = /(?:^|\s)السوره\s+التي\s+(?:يذكر|ذكر|تذكر)\s+فيها\s+(.+)$/.exec(t);
+  if (described) {
+    const n = lookupSurah(described[1], { allowSingleLetter: true });
+    return n ? [n] : [];
+  }
+
+  const m = /(?:^|\s)سوره\s+(.+)$/.exec(t);
+  if (m) {
+    const n = lookupSurah(m[1], { allowSingleLetter: true });
+    return n ? [n] : [];
+  }
+
+  // No «سورة» keyword at all: accept only when the WHOLE heading (minus an
+  // optional «تفسير») is itself a known name — «فاتحة الكتاب», «تفسير الفاتحة».
+  const bare = t.replace(/^تفسير\s+/, "").trim();
+  const words = bare.split(/\s+/);
+  if (words.length <= 4) {
+    const n = SURAH_BY_NAME.get(bare);
+    if (n && !SINGLE_LETTER.has(bare)) return [n];
+  }
+  return [];
+}
+
+/**
+ * Surah number from a chapter heading (first surah when a heading covers
+ * several). Returns 0 if not a surah heading.
  */
 export function surahFromHeading(title) {
-  const t = normalizeArabic(String(title ?? "").replace(/[[\]()﵇﵍]/g, " "));
-  const m = /(?:^|\s)سوره\s+(.+)$/.exec(t);
-  if (!m) return 0;
-  return lookupSurah(m[1], { allowSingleLetter: true });
+  return surahsFromHeading(title)[0] ?? 0;
+}
+
+/**
+ * Is this *paragraph* a surah heading printed inside the page text?
+ * Ibn Kathir 8473 opens al-Shu'ara (page 3040) with the paragraph «سورة الشعراء»
+ * and al-Ankabut with «تفسير سورة العنكبوت» (last paragraph of 3167) — neither
+ * has a TOC entry, so the index builder must find them in the text. Only a
+ * short paragraph that *starts* with the heading counts; prose mentioning a
+ * surah («… في أول سورة "البقرة".») never does.
+ */
+export function surahHeadingInParagraph(paragraph) {
+  const raw = String(paragraph ?? "").trim();
+  if (!raw || raw.length > 60) return [];
+  const t = normalizeArabic(raw.replace(/[[\]()«»"“”﵇﵍﵊﵌]/g, " "));
+  if (!/^(?:تفسير\s+)?(?:سوره|سورت[يا]|السوره\s+التي|فاتحه الكتاب)/.test(t)) return [];
+  if (/^(?:تفسير\s+)?سوره\s+\S+\s*[:：]/.test(t)) return []; // «سورة البقرة: ٢٥٥» is a reference, not a heading
+  return surahsFromHeading(raw);
 }
 
 const NUM = `${DIGITS}{1,3}`;
@@ -254,24 +461,61 @@ export function detectAyahs(content) {
 }
 
 /**
- * Ayah numbers printed inside Qur'anic brackets «﴿ … (١٣٠) … ﴾» on a page whose
- * surah is already known (from the chapter path). This is how tafsir editions
- * mark which ayah is being explained. Returns ascending unique ayah numbers.
+ * Qur'anic bracket segments «﴿ … ﴾» in ONE paragraph.
+ *
+ * A block can be split by the page break: the last paragraph of a page may
+ * open «﴿» without closing, and the first paragraph of the next page may close
+ * «﴾» without opening. Those halves are only accepted at the page edges
+ * (`first` / `last`) so that inline footnote calls «(١)» in ordinary prose are
+ * never mistaken for ayah numbers.
  */
-export function detectQuranBracketAyahs(content, surah) {
-  const text = Array.isArray(content) ? content.join("\n") : String(content ?? "");
+function bracketSegments(text, { first = false, last = false } = {}) {
+  const segs = [];
+  const re = /﴿([^﴾]*)﴾/g;
+  let m;
+  while ((m = re.exec(text))) segs.push(m[1]);
+  if (first) {
+    const close = text.indexOf("﴾");
+    const open = text.indexOf("﴿");
+    if (close >= 0 && (open < 0 || close < open)) segs.push(text.slice(0, close));
+  }
+  if (last) {
+    const open = text.lastIndexOf("﴿");
+    if (open >= 0 && text.indexOf("﴾", open) < 0) segs.push(text.slice(open + 1));
+  }
+  return segs;
+}
+
+/** Ayah numbers «(n)» inside the bracket segments of one paragraph, for a known surah. */
+export function quranBracketAyahsInParagraph(text, surah, edges = {}) {
   const count = AYAH_COUNTS[surah] ?? 0;
   if (!count) return [];
   const out = new Set();
-  const block = /﴿([^﴾]*)﴾/g;
-  let b;
-  while ((b = block.exec(text))) {
+  for (const seg of bracketSegments(String(text ?? ""), edges)) {
     const inner = new RegExp(`\\((${NUM})\\)`, "g");
     let n;
-    while ((n = inner.exec(b[1]))) {
+    while ((n = inner.exec(seg))) {
       const v = Number(toLatinDigits(n[1]));
       if (v >= 1 && v <= count) out.add(v);
     }
   }
+  return [...out].sort((a, c) => a - c);
+}
+
+/**
+ * Ayah numbers printed inside Qur'anic brackets «﴿ … (١٣٠) … ﴾» on a page whose
+ * surah is already known (from the chapter path / index). This is how tafsir
+ * editions mark which ayah is being explained. Returns ascending unique ayah
+ * numbers. Accepts the page's paragraphs (preferred — page-edge halves of a
+ * split block are then recognised) or a flat string.
+ */
+export function detectQuranBracketAyahs(content, surah) {
+  const list = Array.isArray(content) ? content.map((p) => String(p ?? "")) : [String(content ?? "")];
+  const out = new Set();
+  const firstIdx = list.findIndex((p) => !PAGE_MARK_RE.test(p) && p.trim() !== "﷽");
+  const lastIdx = list.length - 1;
+  list.forEach((p, i) => {
+    for (const v of quranBracketAyahsInParagraph(p, surah, { first: i === firstIdx, last: i === lastIdx })) out.add(v);
+  });
   return [...out].sort((a, c) => a - c);
 }

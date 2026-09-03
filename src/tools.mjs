@@ -20,11 +20,11 @@ import {
   resolveHadith,
   resolveHadithLive,
   resolveTafsirAyah,
-  resolveTafsirAyahLive,
+  resolveTafsirAyahBounded,
   hadithNumbersOnPage,
   indexStatus,
 } from "./lib/hadith-index.mjs";
-import { detectHadithNumbers, detectAyahs } from "./lib/citation-detect.mjs";
+import { detectHadithNumbers, detectAyahs, gradingAcrossPages } from "./lib/citation-detect.mjs";
 import { normalizeArabic } from "./lib/arabic.mjs";
 
 export const SERVER_VERSION = "2.3.0";
@@ -164,7 +164,7 @@ export function createServer(client = createClient({ text: createHttp().text }))
 
   tool(
     "search_library",
-    "Shamela native full-text search: any/all/exact-phrase, exclude_words, category ও century ফিল্টার, pagination। শতক (century) হিজরি, '-2' = জাহিলি যুগ। exclude_words শুধু ফেরত-আসা snippet-এ প্রযোয় (সম্পূর্ণ কর্পাস থেকে বাদ নয়)। ফলাফলে hadith_numbers/ayah রেফারেন্সও থাকে যদি সূচি তৈরি থাকে।",
+    "Shamela native full-text search: any/all/exact-phrase, exclude_words, category ও century ফিল্টার, pagination। শতক (century) হিজরি, '-2' = জাহিলি যুগ। exclude_words শুধু ফেরত-আসা snippet-এ প্রযোজ্য (সম্পূর্ণ কর্পাস থেকে বাদ নয়)। প্রতিটি ফলাফল = {title, author, url, snippet, book_id, page_id}; সংশ্লিষ্ট হাদিস নম্বর/আয়াত জানতে সেই page_id দিয়ে get_book_page (hadith_numbers, ayah_refs দেয়) বা get_hadith_by_number ব্যবহার করুন। hadith_numbers ফিল্ড কেবল তখনই থাকে যখন static সূচি ওই পৃষ্ঠাটি চেনে (index_status দেখুন)।",
     {
       query: z.string().min(1).max(250),
       match_mode: z.enum(["any_words", "all_words", "exact_phrase"]).default("any_words"),
@@ -175,11 +175,24 @@ export function createServer(client = createClient({ text: createHttp().text }))
     },
     async (x) => {
       const r = await client.searchLibrary(x.query, x.match_mode, x.exclude_words || [], x.categories || [], x.century || [], x.page);
-      r.results = r.results.map((res) => {
-        const hadith_numbers = hadithNumbersOnPage(res.book_id, res.page_id);
-        return { ...res, hadith_numbers: hadith_numbers.length ? hadith_numbers : undefined };
+      let enriched = 0;
+      r.results = (r.results ?? []).map((res) => {
+        const nums = hadithNumbersOnPage(res.book_id, res.page_id);
+        if (!nums.length) return res; // field absent — never an empty/undefined placeholder
+        enriched += 1;
+        return { ...res, hadith_numbers: nums };
       });
-      return response(r);
+      const status = indexStatus();
+      return response({
+        ...r,
+        // Honest note about the enrichment so a caller never waits for a field that cannot appear.
+        hadith_numbers_note:
+          enriched > 0
+            ? `${enriched}/${r.results.length} ফলাফলে static সূচি থেকে hadith_numbers যুক্ত হয়েছে।`
+            : status.hadith_entries
+              ? "কোনো ফলাফলের পৃষ্ঠা static হাদিস-সূচিতে নেই — hadith_numbers অনুপস্থিত; page_id দিয়ে get_book_page দেখুন।"
+              : "static হাদিস-সূচি এখনো খালি — search ফলাফলে hadith_numbers থাকবে না; page_id দিয়ে get_book_page (hadith_numbers/ayah_refs) ব্যবহার করুন।",
+      });
     },
   );
 
@@ -198,7 +211,7 @@ export function createServer(client = createClient({ text: createHttp().text }))
   // --- Priority 1: hadith-number-addressable retrieval ---
   tool(
     "get_hadith_by_number",
-    "হাদিস নম্বর → matn/isnad, পৃষ্ঠা অনুমান ছাড়া। ধাপ: (1) static সূচি; (2) না থাকলে Shamela-র নিজস্ব 'رقم الحديث' lookup (/ajax/specialnumber2id) → পৃষ্ঠা আনা → অনুচ্ছেদ-শুরুতে «N -» marker আছে কিনা যাচাই। marker না মিললে found:false + কারণ, কখনো অনুমান নয়। canonical সংস্করণের book_id-র জন্য list_canonical_editions দেখুন (যেমন বুখারী 1681, মুসলিম 1727)। সতর্কতা: মুয়াত্তা (1699)-তে নম্বর প্রতি কিতাবে নতুন করে শুরু হয়।",
+    "হাদিস নম্বর → matn/isnad (+ সম্পাদকীয় হুকুম: পৃষ্ঠার টীকায় স্পষ্ট «[حكم الألباني] : …» থাকলে grading ফিল্ডে — তিরমিযী/আবু দাউদ/নাসাঈ/ইবনে মাজাহ সংস্করণে; বুখারী/মুসলিমে থাকে না; মতনের নিজস্ব «حسن صحيح» হুকুম হিসেবে ধরা হয় না), পৃষ্ঠা অনুমান ছাড়া। ধাপ: (1) static সূচি; (2) না থাকলে Shamela-র নিজস্ব 'رقم الحديث' lookup (/ajax/specialnumber2id) → পৃষ্ঠা আনা → অনুচ্ছেদ-শুরুতে «N -» marker আছে কিনা যাচাই। marker না মিললে found:false + কারণ, কখনো অনুমান নয়। canonical সংস্করণের book_id-র জন্য list_canonical_editions দেখুন (যেমন বুখারী 1681, মুসলিম 1727)। সতর্কতা: মুয়াত্তা (1699)-তে নম্বর প্রতি কিতাবে নতুন করে শুরু হয়।",
     { book_id: idParam, hadith_number: intId },
     async (x) => {
       const canon = canonicalFields({ book_id: x.book_id });
@@ -234,6 +247,12 @@ export function createServer(client = createClient({ text: createHttp().text }))
 
   function formatHadith(r, canon) {
     const pd = r.page_data ?? {};
+    // Editorial grading: ONLY an explicit «[حكم الألباني] : …» / «قال الألباني: …»
+    // in the apparatus of the page(s) this hadith is printed on; attributed to
+    // this hadith only when unambiguous. Tirmidhi's own «حسن صحيح» in the matn is
+    // never reported as a grading.
+    const pages = r.pages ?? [{ page: r.page, footnotes: pd.footnotes ?? [], paragraphs: pd.paragraphs ?? [], numbers: r.numbers_on_page ?? detectHadithNumbers(pd.paragraphs ?? []) }];
+    const g = gradingAcrossPages(pages, r.hadith_number);
     return {
       found: true,
       book_id: r.book_id,
@@ -251,6 +270,9 @@ export function createServer(client = createClient({ text: createHttp().text }))
       routes_on_page: r.routes_on_page,
       other_numbers_on_page: r.numbers_on_page,
       footnotes: pd.footnotes?.length ? pd.footnotes : undefined,
+      grading: g.grading,
+      gradings_on_page: g.gradings_on_page.length ? g.gradings_on_page : undefined,
+      grading_note: g.grading_note,
       source: r.source,
       verified_on_page: r.source !== "static_index",
       ...canon,
@@ -270,18 +292,21 @@ export function createServer(client = createClient({ text: createHttp().text }))
   // --- Priority 2: ayah-addressable tafsir retrieval ---
   tool(
     "get_tafsir_by_ayah",
-    "তাফসির বই (book_id) + (surah, ayah) → সেই আয়াতের আলোচনার পৃষ্ঠা। ধাপ: static সূচি → না থাকলে TOC-এ «تفسير سورة X» থেকে শুরু করে পৃষ্ঠা হেঁটে ﴿…(n)…﴾ marker মিলিয়ে থামা (সীমাবদ্ধ, অনুমান নয়)। ইবনে কাসীর canonical = 8473।",
+    "তাফসির বই (book_id) + (surah, ayah) → সেই আয়াতের আলোচনার পৃষ্ঠা। উৎস: persisted সূচি (src/data/tafsir-index.mjs: প্রতিটি সূরার পৃষ্ঠা-পরিসর + জানা আয়াত→পৃষ্ঠা)। আয়াত সূচিতে না থাকলে শুধু সেই সূরার পরিসরের ভেতরে ﴿…(n)…﴾ marker ধরে bisection (সর্বোচ্চ ২০ পৃষ্ঠা পড়া) — TOC থেকে বই হাঁটা হয় না। ফলাফলে precision: exact | nearest_before | surah_start (ফাতিহা inline উদ্ধৃত, ব্লক নেই)। ইবনে কাসীর canonical = 8473 (১১৪ সূরার পরিসর সূচিভুক্ত)।",
     { book_id: idParam, surah: z.number().int().min(1).max(114), ayah: z.number().int().min(1) },
     async (x) => {
       let res = resolveTafsirAyah(x.book_id, x.surah, x.ayah);
-      if (!res.found) res = await resolveTafsirAyahLive(client, x.book_id, x.surah, x.ayah);
+      if (!res.found) res = await resolveTafsirAyahBounded(client, x.book_id, x.surah, x.ayah);
       if (!res.found)
         return response({
           ...res,
           book_id: x.book_id,
           index_status: indexStatus(),
           ...canonicalFields({ book_id: x.book_id }),
-          hint: "সূরা TOC-তে নেই বা সীমার মধ্যে আয়াত পাওয়া যায়নি। get_book_details দিয়ে TOC দেখে get_book_page ব্যবহার করুন।",
+          hint:
+            res.reason === "no_tafsir_index_for_book"
+              ? "এই book_id-র জন্য persisted তাফসির সূচি নেই (বর্তমানে শুধু 8473)। scripts/build-tafsir-index.mjs --tafsir <id> চালিয়ে সূচি তৈরি করুন, অথবা get_book_details → get_book_page ব্যবহার করুন।"
+              : "get_book_details দিয়ে TOC দেখে get_book_page ব্যবহার করুন।",
         });
       const page = await client.bookPage(res.book_id, res.page);
       return response({
@@ -290,7 +315,11 @@ export function createServer(client = createClient({ text: createHttp().text }))
         surah: res.surah,
         ayah: res.ayah,
         page: res.page,
+        precision: res.precision,
         source: res.source,
+        note: res.note,
+        surah_range: res.surah_range,
+        pages_fetched: res.pages_fetched,
         ayahs_marked_on_page: res.ayahs_marked_on_page,
         book_title: page.book_title,
         volume: page.volume,

@@ -13,7 +13,7 @@ previous agent's claims).
 | Phase | Status |
 |---|---|
 | 0.1 reconstruct source | ✅ done — `src/index.mjs` + `src/lib/*.mjs` + `src/tools.mjs`; legacy 783 KB `src/worker.mjs` deleted |
-| 0.2 test harness | ✅ done — `node --test`, 78 offline tests incl. a **real shamela page fixture** (`test/fixtures/`) |
+| 0.2 test harness | ✅ done — `node --test`, 104 offline tests incl. a **real shamela page fixture** (`test/fixtures/`) |
 | 0.3 storage decision | ✅ static data files (`src/data/*.mjs`) + live fallback; KV not needed yet |
 | 0.4 rate limiting | 🟡 upstream side done (per-isolate concurrency cap 4, 20 s timeout, 15-min cache, in-flight de-dupe, builder delay ≥250 ms). **Public `/mcp` endpoint still has no per-caller limit/auth.** |
 | 0.5 ToS/copyright note | ⏳ pending |
@@ -21,10 +21,10 @@ previous agent's claims).
 | 1.1 canonical editions | ✅ **hand-verified whitelist** of 9 book_ids (see `src/data/canonical-book-ids.mjs`), each checked against `/ajax/specialnumber2id`. The old محقق-name heuristic was wrong on real data (false negative on Bukhari 1681) and is gone. `list_canonical_editions` tool added |
 | 1.2 coverage gap (P5) | 🟡 script exists; `reports/` not yet generated (needs a network run — see workflow) |
 | 1.3 filter docs | ✅ done |
-| 2.1 `get_hadith_by_number` | ✅ **works without any prebuilt index** — uses shamela's own `رقم الحديث` lookup (`/ajax/specialnumber2id`) then verifies the «N -» marker on the fetched page; continues across page breaks; refuses out-of-range numbers; never guesses |
+| 2.1 `get_hadith_by_number` | ✅ **works without any prebuilt index** — uses shamela's own `رقم الحديث` lookup (`/ajax/specialnumber2id`) then verifies the «N -» marker on the fetched page; continues across page breaks; refuses out-of-range numbers; never guesses. **Editorial grading**: explicit `[حكم الألباني] : …` / `قال الألباني: …` in the page apparatus → `grading` (all three printed shapes: Tirmidhi `: صحيح`, Abu Dawud `: حسن صحيح`, Ibn Majah label + newline); attributed only when unambiguous, else `grading: null` + `gradings_on_page`; the compiler's own «حسن صحيح» is never a grading |
 | 2.2 reverse page→hadith | ✅ `hadith_numbers` on `get_book_page` now come from **on-page markers** (footnotes excluded), static index only as fallback |
-| 2.3 inline hadith numbers | 🟡 `search_library` hits carry `hadith_numbers` only when the static index has the page (index still empty) |
-| 2.4 `get_tafsir_by_ayah` | ✅ live TOC walk («تفسير سورة X» → pages → «﴿…(n)…﴾» markers), bounded; static index as cache. Ibn Kathir 8473 verified |
+| 2.3 inline hadith numbers | 🟡 `search_library` hits carry `hadith_numbers` only when the static hadith index has the page (index still empty). The tool description and a `hadith_numbers_note` in every response now say exactly that; the key is absent otherwise — no phantom field |
+| 2.4 `get_tafsir_by_ayah` | ✅ **persisted index** `src/data/tafsir-index.mjs`: Ibn Kathir 8473 — all **114 surah page ranges** (TOC headings in every shape 8473 uses: `فاتحة الكتاب`, `سورة X`, `"ن"`, `سأل سائل`, `السورة التي يذكر فيها الماعون`, `سورتي المعوذتين` …; al-Shu'ara → 3040 and al-Ankabut → 3168 have **no TOC entry** and are seeded from their in-text headings) + hand-verified ayah → page seeds. Unindexed ayah → bounded search **inside the surah's range only** (≤ 20 page reads), result always labelled `precision: exact / nearest_before / surah_start`. No request-time TOC walk. Full ayah map is filled offline by `scripts/build-tafsir-index.mjs` (workflow input `tafsir`) |
 | 2.5 deep-link snippets | 🟡 same dependency as 2.3 |
 | 2.6 printed page lookup | ✅ new `get_page_by_printed_number` (`/ajax/pagenum2id`) |
 | 3.x metadata / tarjamah | ⏳ pending (`/ajax/tarjama/<narrator_id>` endpoint identified) |
@@ -33,11 +33,13 @@ previous agent's claims).
 ### Where the network-dependent scripts run
 
 `resolve:canonical` (now a **re-check** of the hand-verified whitelist),
-`build:index` and `check:coverage` need real access to `shamela.ws`. The
-**`Refresh citation index`** workflow (`.github/workflows/refresh-index.yml`,
-manual + monthly) runs them on a GitHub runner and opens a PR with
-`src/data/hadith-index.mjs` + `reports/*`. The Worker does not depend on it —
-the static index only makes lookups cheaper.
+`build:index`, `build:tafsir` and `check:coverage` need real access to
+`shamela.ws`. The **`Refresh citation index`** workflow
+(`.github/workflows/refresh-index.yml`, manual + monthly) runs them on a GitHub
+runner and opens a PR with `src/data/hadith-index.mjs`,
+`src/data/tafsir-index.mjs` + `reports/*`. The Worker does not depend on the
+hadith index (live lookup); the tafsir index ships with surah ranges already,
+and `build:tafsir` only makes ayah lookups exact/cheaper.
 
 ### Verified shamela.ws facts (2026-09-03)
 
@@ -50,6 +52,13 @@ the static index only makes lookups cheaper.
 - Muslim (1727) prints `١ - (٨) …` — the citable number is in parentheses.
 - Muwatta (1699) restarts numbering per كتاب; shamela's lookup returns the
   *last* kitab's match for small numbers.
+- Ibn Kathir 8473: ayah blocks are `﴿… (٢٥٤)﴾` with Arabic-Indic numbers and can
+  be split across a page break; **al-Fatiha (pp. 151–197) has no blocks at all**
+  (ayahs quoted inline). Surah headings come in a dozen shapes (see
+  `test/citation-detect.test.mjs`); al-Shu'ara and al-Ankabut have no TOC entry.
+- Albani gradings are printed in `p.hamesh` footnotes as `[حكم الألباني] : X`
+  (1435, 1726) or `[حكم الألباني]` + newline + `X` (1198). Bukhari/Muslim/Musnad
+  pages carry none.
 
 > **Audience & language.** The end-user is a practicing `alim` who will catch a
 > wrong citation. Every feature here is judged against one question: *can the

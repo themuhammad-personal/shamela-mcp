@@ -7,6 +7,11 @@ import {
   detectAyahs,
   detectQuranBracketAyahs,
   surahFromHeading,
+  surahsFromHeading,
+  surahHeadingInParagraph,
+  extractGradings,
+  gradingForHadith,
+  gradingAcrossPages,
   SURAH_NAMES,
   AYAH_COUNTS,
 } from "../src/lib/citation-detect.mjs";
@@ -134,9 +139,49 @@ test("surahFromHeading parses real TOC titles from book 8473", () => {
   assert.equal(surahFromHeading("تفسير سورة مريم [﵍]"), 19);
   assert.equal(surahFromHeading("تفسير سورة ص"), 38);
   assert.equal(surahFromHeading("تفسير سورة ق"), 50);
-  assert.equal(surahFromHeading("فاتحة الكتاب"), 0, "no «سورة» keyword → not a heading match");
+  assert.equal(surahFromHeading("فاتحة الكتاب"), 1, "8473's only heading for al-Fatiha has no «سورة» keyword");
   assert.equal(surahFromHeading("من لم ير بأسا أن يقول: سورة البقرة، وسورة كذا"), 2, "loose but acceptable: caller filters by TOC depth");
   assert.equal(surahFromHeading("مقدمة ابن كثير"), 0);
+  assert.equal(surahFromHeading("الآية: ٢٥٥"), 0);
+  assert.equal(surahFromHeading(""), 0);
+});
+
+test("surahFromHeading: every heading shape that book 8473 really uses (live TOC, 2026-09-03)", () => {
+  const cases = [
+    ["تفسير سورة فاطر وهي مكية", 35],
+    ["تفسير سورة القتال", 47],
+    ['تفسير سورة "ن"', 68],
+    ["تفسير سورة سأل سائل", 70],
+    ["تفسير سورة سبح", 87],
+    ["تفسير سورة والشمس وضحاها", 91],
+    ["تفسير سورة ألم نشرح", 94],
+    ["تفسير سورة والتين والزيتون", 95],
+    ["تفسير سورة اقرأ", 96],
+    ["تفسير سورة لم يكن", 98],
+    ["تفسير سورة إذا زلزلت", 99],
+    ["تفسير سورة ويل لكل همزة لمزة", 104],
+    ["تفسير سورة لإيلاف قريش", 106],
+    ["تفسير السورة التي يذكر فيها الماعون", 107],
+    ["تفسير سورة قل يا أيها الكافرون", 109],
+    ["تفسير سورة إذا جاء نصر الله والفتح", 110],
+    ["تفسير سورة تبت", 111],
+    ["سورة الناس", 114],
+    ["سورة الشعراء", 26],
+    ["تفسير سورة العنكبوت", 29],
+  ];
+  for (const [heading, expected] of cases) assert.equal(surahFromHeading(heading), expected, heading);
+  assert.deepEqual(surahsFromHeading("تفسير سورتي المعوذتين"), [113, 114]);
+  assert.deepEqual(surahsFromHeading("تفسير سورة الفلق"), [113]);
+});
+
+test("surahHeadingInParagraph: in-text surah headings only, never prose mentions", () => {
+  assert.deepEqual(surahHeadingInParagraph("سورة الشعراء"), [26], "8473 p.3040 — no TOC entry");
+  assert.deepEqual(surahHeadingInParagraph("تفسير سورة العنكبوت"), [29], "8473 p.3167 last paragraph");
+  assert.deepEqual(surahHeadingInParagraph("[فاتحة الكتاب]"), [1]);
+  assert.deepEqual(surahHeadingInParagraph('أما الكلام على الحروف المقطعة فقد تقدم في أول سورة "البقرة".'), []);
+  assert.deepEqual(surahHeadingInParagraph('[والله أعلم. آخر تفسير سورة "القصص"] (٧)'), []);
+  assert.deepEqual(surahHeadingInParagraph("سورة البقرة: ٢٥٥"), [], "a reference, not a heading");
+  assert.deepEqual(surahHeadingInParagraph("﴿طسم (١)﴾"), []);
 });
 
 test("SURAH_NAMES covers all 114 surahs exactly once; AYAH_COUNTS sums to 6236", () => {
@@ -144,4 +189,90 @@ test("SURAH_NAMES covers all 114 surahs exactly once; AYAH_COUNTS sums to 6236",
   assert.equal(numbers.length, 114);
   assert.equal(new Set(numbers).size, 114);
   assert.equal(AYAH_COUNTS.reduce((a, b) => a + b, 0), 6236);
+});
+
+// --- editorial gradings (al-Albani) — real footnote shapes, read live 2026-09-03 ---
+
+test("extractGradings: Tirmidhi 1435/3 «[حكم الألباني] : صحيح»", () => {
+  const g = extractGradings(["[حكم الألباني] : صحيح"]);
+  assert.equal(g.length, 1);
+  assert.equal(g[0].grader, "الألباني");
+  assert.equal(g[0].verdict, "صحيح");
+  assert.equal(g[0].verdict_class, "sahih");
+  assert.equal(g[0].where, "footnote");
+});
+
+test("extractGradings: Abu Dawud 1726/3 «[حكم الألباني] : حسن صحيح»", () => {
+  const [g] = extractGradings(["[حكم الألباني] : حسن صحيح"]);
+  assert.equal(g.verdict, "حسن صحيح");
+  assert.equal(g.verdict_class, "hasan_sahih");
+});
+
+test("extractGradings: Ibn Majah 1198/4 — label on its own line, verdict on the next", () => {
+  const [g] = extractGradings(["[حكم الألباني]\nصحيح"]);
+  assert.equal(g.verdict, "صحيح");
+  const [g2] = extractGradings(["(١) في نسخة: كذا\n[حكم الألباني]\nضعيف جدا"]);
+  assert.equal(g2.verdict, "ضعيف جدا");
+  assert.equal(g2.verdict_class, "daif");
+});
+
+test("extractGradings: «قال الألباني: …» / «قال الشيخ الألباني: …» in a footnote", () => {
+  assert.equal(extractGradings(["قال الشيخ الألباني: ضعيف"])[0].verdict_class, "daif");
+  assert.equal(extractGradings(["قال الألباني: حديث موضوع."])[0].verdict_class, "mawdu");
+  assert.equal(extractGradings(["قال الألباني: صحيح دون قوله: \"وكان يحب\""])[0].verdict, "صحيح دون قوله: \"وكان يحب\"");
+});
+
+test("extractGradings NEGATIVES: never guess from commentary or the compiler's own words", () => {
+  // Nasa'i 829/7 — no Albani footnote at all
+  assert.deepEqual(extractGradings([], ["حَدَّثَنَا … ⦗٧⦘ … قَالَ"]), []);
+  // Musnad 25794/153 — editor's biography footnote
+  assert.deepEqual(extractGradings(["(١) هو أبو بكر الصديق، عبد الله بن عثمان، أول الخلفاء الراشدين"]), []);
+  // Tirmidhi's own judgement in the matn
+  assert.deepEqual(extractGradings([], ["١ - حَدَّثَنَا … هَذَا حَدِيثٌ حَسَنٌ صَحِيحٌ"]), []);
+  // prose that merely mentions al-Albani
+  assert.deepEqual(extractGradings(["وقال الألباني في الإرواء (٣/ ٤٥) بعد أن ساقه من طريق آخر"]), []);
+  assert.deepEqual(extractGradings(["انظر: صحيح الجامع للألباني برقم (١٢٣)"]), []);
+  // a muhaqqiq's own grading is not Albani's
+  assert.deepEqual(extractGradings(["(٢) إسناده صحيح على شرط الشيخين"]), []);
+  // «قال الألباني» in the MAIN text is not honoured (only the bracketed label is)
+  assert.deepEqual(extractGradings([], ["قال الألباني: صحيح"]), []);
+});
+
+test("gradingForHadith attributes only when unambiguous", () => {
+  const one = gradingForHadith({ footnotes: ["[حكم الألباني] : صحيح"], numbersOnPage: ["12"], hadithNumber: "12" });
+  assert.equal(one.grading.verdict, "صحيح");
+  assert.equal(one.grading.attribution, "only_grading_on_page");
+
+  const ordered = gradingForHadith({ footnotes: ["[حكم الألباني] : صحيح", "[حكم الألباني] : ضعيف"], numbersOnPage: ["12", "13"], hadithNumber: "13" });
+  assert.equal(ordered.grading.verdict, "ضعيف");
+  assert.equal(ordered.grading.attribution, "by_order_on_page");
+
+  const ambiguous = gradingForHadith({ footnotes: ["[حكم الألباني] : صحيح"], numbersOnPage: ["12", "13"], hadithNumber: "13" });
+  assert.equal(ambiguous.grading, null);
+  assert.equal(ambiguous.gradings_on_page.length, 1);
+  assert.ok(ambiguous.grading_note);
+
+  const none = gradingForHadith({ footnotes: ["(١) في أ: كذا"], numbersOnPage: ["12"], hadithNumber: "12" });
+  assert.deepEqual(none, { grading: null, gradings_on_page: [] });
+});
+
+test("gradingAcrossPages: verdict printed on the continuation page still belongs to the running hadith", () => {
+  const r = gradingAcrossPages(
+    [
+      { page: "100", footnotes: ["(١) في م: كذا"], numbers: ["40"] },
+      { page: "101", footnotes: ["[حكم الألباني] : حسن"], numbers: [] },
+    ],
+    "40",
+  );
+  assert.equal(r.grading.verdict, "حسن");
+  assert.equal(r.grading.page, "101");
+  // …but if the continuation page opens a new hadith too, one verdict is ambiguous
+  const amb = gradingAcrossPages(
+    [
+      { page: "100", footnotes: [], numbers: ["40"] },
+      { page: "101", footnotes: ["[حكم الألباني] : حسن"], numbers: ["41"] },
+    ],
+    "40",
+  );
+  assert.equal(amb.grading, null);
 });
