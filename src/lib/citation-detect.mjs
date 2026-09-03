@@ -270,25 +270,25 @@ export const SURAH_NAMES = [
   [6, "الأنعام"], [7, "الأعراف"], [8, "الأنفال"], [9, "التوبة", "براءة"], [10, "يونس"],
   [11, "هود"], [12, "يوسف"], [13, "الرعد"], [14, "إبراهيم"], [15, "الحجر"],
   [16, "النحل"], [17, "الإسراء", "بني إسرائيل", "سبحان"], [18, "الكهف"], [19, "مريم"], [20, "طه"],
-  [21, "الأنبياء"], [22, "الحج"], [23, "المؤمنون"], [24, "النور"], [25, "الفرقان"],
+  [21, "الأنبياء"], [22, "الحج"], [23, "المؤمنون", "قد أفلح المؤمنون", "المؤمنين"], [24, "النور"], [25, "الفرقان"],
   [26, "الشعراء"], [27, "النمل"], [28, "القصص"], [29, "العنكبوت"], [30, "الروم"],
   [31, "لقمان"], [32, "السجدة"], [33, "الأحزاب"], [34, "سبأ"], [35, "فاطر", "الملائكة"],
-  [36, "يس"], [37, "الصافات"], [38, "ص"], [39, "الزمر"], [40, "غافر", "المؤمن"],
-  [41, "فصلت", "حم السجدة"], [42, "الشورى"], [43, "الزخرف"], [44, "الدخان"], [45, "الجاثية"],
+  [36, "يس"], [37, "الصافات"], [38, "ص"], [39, "الزمر"], [40, "غافر", "المؤمن", "حم المؤمن"],
+  [41, "فصلت", "حم السجدة"], [42, "الشورى", "حم عسق", "عسق"], [43, "الزخرف"], [44, "الدخان"], [45, "الجاثية"],
   [46, "الأحقاف"], [47, "محمد", "القتال"], [48, "الفتح"], [49, "الحجرات"], [50, "ق"],
-  [51, "الذاريات"], [52, "الطور"], [53, "النجم"], [54, "القمر"], [55, "الرحمن"],
+  [51, "الذاريات"], [52, "الطور"], [53, "النجم"], [54, "القمر", "اقتربت الساعة", "اقتربت"], [55, "الرحمن"],
   [56, "الواقعة"], [57, "الحديد"], [58, "المجادلة"], [59, "الحشر"], [60, "الممتحنة"],
-  [61, "الصف"], [62, "الجمعة"], [63, "المنافقون"], [64, "التغابن"], [65, "الطلاق"],
+  [61, "الصف"], [62, "الجمعة"], [63, "المنافقون", "المنافقين"], [64, "التغابن"], [65, "الطلاق"],
   [66, "التحريم"], [67, "الملك", "تبارك"], [68, "القلم", "ن"], [69, "الحاقة"], [70, "المعارج", "سأل سائل"],
   [71, "نوح"], [72, "الجن"], [73, "المزمل"], [74, "المدثر"], [75, "القيامة"],
-  [76, "الإنسان", "الدهر"], [77, "المرسلات"], [78, "النبأ", "عم"], [79, "النازعات"], [80, "عبس"],
-  [81, "التكوير"], [82, "الانفطار"], [83, "المطففين", "التطفيف"], [84, "الانشقاق"], [85, "البروج"],
-  [86, "الطارق"], [87, "الأعلى", "سبح", "سبح اسم ربك الأعلى"], [88, "الغاشية"], [89, "الفجر"], [90, "البلد"],
+  [76, "الإنسان", "الدهر", "هل أتى على الإنسان", "هل أتى"], [77, "المرسلات"], [78, "النبأ", "عم", "عم يتساءلون"], [79, "النازعات"], [80, "عبس"],
+  [81, "التكوير", "إذا الشمس كورت", "كورت"], [82, "الانفطار", "إذا السماء انفطرت", "انفطرت"], [83, "المطففين", "التطفيف", "ويل للمطففين"], [84, "الانشقاق", "إذا السماء انشقت", "انشقت"], [85, "البروج"],
+  [86, "الطارق", "السماء والطارق"], [87, "الأعلى", "سبح", "سبح اسم ربك الأعلى"], [88, "الغاشية"], [89, "الفجر"], [90, "البلد"],
   [91, "الشمس", "والشمس وضحاها", "الشمس وضحاها"], [92, "الليل", "والليل إذا يغشى"], [93, "الضحى", "والضحى"],
   [94, "الشرح", "الانشراح", "ألم نشرح"], [95, "التين", "والتين والزيتون", "التين والزيتون"],
   [96, "العلق", "اقرأ"], [97, "القدر"], [98, "البينة", "لم يكن"], [99, "الزلزلة", "الزلزال", "إذا زلزلت"], [100, "العاديات"],
-  [101, "القارعة"], [102, "التكاثر"], [103, "العصر"], [104, "الهمزة", "ويل لكل همزة", "ويل لكل همزة لمزة"], [105, "الفيل"],
-  [106, "قريش", "لإيلاف", "لإيلاف قريش"], [107, "الماعون"], [108, "الكوثر"], [109, "الكافرون", "قل يا أيها الكافرون"],
+  [101, "القارعة"], [102, "التكاثر", "ألهاكم", "ألهاكم التكاثر"], [103, "العصر"], [104, "الهمزة", "ويل لكل همزة", "ويل لكل همزة لمزة"], [105, "الفيل"],
+  [106, "قريش", "لإيلاف", "لإيلاف قريش"], [107, "الماعون", "أرأيت"], [108, "الكوثر"], [109, "الكافرون", "قل يا أيها الكافرون"],
   [110, "النصر", "إذا جاء نصر الله", "إذا جاء نصر الله والفتح"],
   [111, "المسد", "اللهب", "تبت"], [112, "الإخلاص", "التوحيد"], [113, "الفلق"], [114, "الناس"],
 ];
@@ -333,12 +333,24 @@ function lookupSurah(raw, { allowSingleLetter = false } = {}) {
   const words = normalizeArabic(String(raw).replace(/[:：()[\]«»"“”،.;\-]/g, " ").replace(/(ال)?آي[ةه]/g, " "))
     .split(/\s+/)
     .filter(Boolean)
-    .filter((w, i) => !(i === 0 && w === "سوره"));
-  for (let len = Math.min(words.length, 6); len >= 1; len -= 1) {
-    const key = words.slice(0, len).join(" ");
-    const n = SURAH_BY_NAME.get(key);
-    if (n && (allowSingleLetter || !SINGLE_LETTER.has(key))) return n;
-  }
+    .filter((w, i) => !(i === 0 && w === "سوره"))
+    // Qurtubi prints «سورة و - الذاريات» (a stray conjunction token before the name).
+    .filter((w, i) => !(i === 0 && w === "و"));
+  const tryWords = (ws) => {
+    for (let len = Math.min(ws.length, 6); len >= 1; len -= 1) {
+      const key = ws.slice(0, len).join(" ");
+      const n = SURAH_BY_NAME.get(key);
+      if (n && (allowSingleLetter || !SINGLE_LETTER.has(key))) return n;
+    }
+    return 0;
+  };
+  const direct = tryWords(words);
+  if (direct) return direct;
+  // Oath-opening names are often written with the conjunction fused to the
+  // word: «والنجم» «والطور» «والفجر» «والتين» «والعاديات» «والعصر» «والمرسلات».
+  // Only the FIRST token is unfused, and only when it starts «وال…» so a real
+  // name that starts with و (none does) or a plain «و…» word is never mangled.
+  if (words.length && /^وال./.test(words[0])) return tryWords([words[0].slice(1), ...words.slice(1)]);
   return 0;
 }
 
@@ -357,8 +369,13 @@ const MULTI_BY_NAME = new Map(MULTI_SURAH_HEADINGS.map(([name, list]) => [normal
  * Returns [] when the title is not a surah heading — never a guess.
  */
 export function surahsFromHeading(title) {
-  const t = normalizeArabic(String(title ?? "").replace(/[[\]()«»"“”﵇﵍﵊﵌]/g, " "));
+  let t = normalizeArabic(String(title ?? "").replace(/[[\]()«»"“”﵇﵍﵊﵌]/g, " "));
   if (!t) return [];
+  // Tabari 7798: «القول في تأويل فاتحة الكتاب», «القول في تفسير السورة التي يذكر
+  // فيها البقرة», «أول تفسير السورة التي يذكر فيها الرعد». Strip the formula;
+  // what remains must still be a surah heading on its own («القول في تأويل
+  // قوله: …» therefore stays unmatched).
+  t = t.replace(/^(?:القول في|اول)\s+(?:تاويل|تفسير)\s+/, "").replace(/^(?:القول في|اول)\s+/, "");
 
   // «سورتي المعوذتين» / «سورتا الفلق والناس»
   const multi = /(?:^|\s)سورت[يا]\s+(.+)$/.exec(t);
@@ -414,6 +431,7 @@ export function surahHeadingInParagraph(paragraph) {
   const t = normalizeArabic(raw.replace(/[[\]()«»"“”﵇﵍﵊﵌]/g, " "));
   if (!/^(?:تفسير\s+)?(?:سوره|سورت[يا]|السوره\s+التي|فاتحه الكتاب)/.test(t)) return [];
   if (/^(?:تفسير\s+)?سوره\s+\S+\s*[:：]/.test(t)) return []; // «سورة البقرة: ٢٥٥» is a reference, not a heading
+  if (isAyahHeading(raw)) return []; // «[سورة البقرة (٢): آية ٨٠]» is Qurtubi's AYAH heading, not a surah start
   return surahsFromHeading(raw);
 }
 
@@ -486,11 +504,52 @@ function bracketSegments(text, { first = false, last = false } = {}) {
   return segs;
 }
 
-/** Ayah numbers «(n)» inside the bracket segments of one paragraph, for a known surah. */
+/**
+ * Editorial ayah headings, as printed by al-Qurtubi 20855 (Dar al-Kutub
+ * al-Misriyya) at the top of every ayah's discussion — the edition quotes the
+ * ayah WITHOUT «﴿…﴾» brackets, so this heading is the only machine-readable
+ * marker on the page:
+ *   «[سورة البقرة (٢): آية ٨٠]»            → [80]
+ *   «[سورة الناس (١١٤): الآيات ١ الى ٣]»    → [1, 2, 3]
+ * The surah number in parentheses must match `surah`; when it is absent the
+ * name is resolved instead. Only a short paragraph that IS the heading counts.
+ */
+const AYAH_HEADING_RE = new RegExp(
+  `^\\s*\\[?\\s*سورة\\s+([^\\[\\]():：]{1,30}?)\\s*(?:\\((${DIGITS}{1,3})\\))?\\s*[:：]\\s*(?:الآيات|الايات|آية|اية)\\s+(${DIGITS}{1,3})(?:\\s*(?:إلى|الى|-|–)\\s*(${DIGITS}{1,3}))?\\s*\\]?\\s*$`,
+);
+/** Is this title/paragraph an editorial ayah heading («[سورة X (n): آية m]»)? Surah-agnostic. */
+export function isAyahHeading(text) {
+  const raw = String(text ?? "").trim();
+  return raw.length > 0 && raw.length <= 80 && AYAH_HEADING_RE.test(raw);
+}
+
+export function ayahHeadingInParagraph(text, surah) {
+  const raw = String(text ?? "").trim();
+  if (!raw || raw.length > 80) return [];
+  const m = AYAH_HEADING_RE.exec(raw);
+  if (!m) return [];
+  const count = AYAH_COUNTS[surah] ?? 0;
+  if (!count) return [];
+  const numbered = m[2] ? Number(toLatinDigits(m[2])) : 0;
+  const named = numbered ? 0 : lookupSurah(m[1], { allowSingleLetter: true });
+  if ((numbered || named) !== surah) return [];
+  const from = Number(toLatinDigits(m[3]));
+  const to = m[4] ? Number(toLatinDigits(m[4])) : from;
+  if (!from || to < from || to > count) return [];
+  const out = [];
+  for (let a = from; a <= to && a - from < 50; a += 1) out.push(a);
+  return out;
+}
+
+/**
+ * Ayah numbers marked in one paragraph for a known surah: «(n)» inside Qur'anic
+ * brackets «﴿…﴾» (Ibn Kathir 8473, Tabari 7798) or an editorial ayah heading
+ * «[سورة X (n): آية m]» (Qurtubi 20855).
+ */
 export function quranBracketAyahsInParagraph(text, surah, edges = {}) {
   const count = AYAH_COUNTS[surah] ?? 0;
   if (!count) return [];
-  const out = new Set();
+  const out = new Set(ayahHeadingInParagraph(text, surah));
   for (const seg of bracketSegments(String(text ?? ""), edges)) {
     const inner = new RegExp(`\\((${NUM})\\)`, "g");
     let n;

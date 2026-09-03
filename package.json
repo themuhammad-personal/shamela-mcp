@@ -1,6 +1,6 @@
 {
   "name": "shamela-mcp",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "private": true,
   "description": "MCP server exposing shamela.ws (Islamic digital library) as a set of tools: browse categories/authors, read book pages, and run full-text search.",
   "type": "module",

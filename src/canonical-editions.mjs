@@ -34,6 +34,8 @@ const WORK_SIGNATURES = {
   "muwatta-malik": ["موطا مالك", "الموطا"],
   "musnad-ahmad": ["مسند احمد", "مسند الامام احمد"],
   "tafsir-ibn-kathir": ["تفسير ابن كثير", "تفسير القران العظيم"],
+  "tafsir-al-tabari": ["تفسير الطبري", "جامع البيان عن تاويل", "جامع البيان في تاويل", "جامع البيان في تفسير"],
+  "tafsir-al-qurtubi": ["تفسير القرطبي", "الجامع لاحكام القران"],
 };
 
 /** Words that mark a derivative work (commentary, abridgement, grading…). */

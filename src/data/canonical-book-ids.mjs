@@ -10,8 +10,8 @@
  *      starts with hadith <n> (spot-checked: 1681/8→19, 1681/7563→11208,
  *      1727/2→12, 1727/3033→7494, 1435/1→3, 1726/1→3, 829/1→7, 1198/1→4,
  *      1699/1→2643 (last kitab, numbering restarts per kitab — see note),
- *      1699/1000→1281, 25794/1→153). Tafsir 8473 has no hadith numbering
- *      (`specialnumber2id` → -1), as expected.
+ *      1699/1000→1281, 25794/1→153). Tafsirs 8473, 7798, 20855 have no hadith
+ *      numbering (`specialnumber2id` → -1), as expected.
  *
  * Do NOT regenerate this file blindly from title heuristics — the previous
  * heuristic (match محقق name) was wrong on real data: e.g. 1681's محقق is
@@ -150,6 +150,29 @@ export default {
         { book_id: "1509", title: "تفسير ابن كثير - ت شمس الدين", note: "" },
         { book_id: "23604", title: "تفسير ابن كثير - ط دار طيبة (other scan)", note: "" },
         { book_id: "21549", title: "مختصر تفسير ابن كثير", note: "abridgement, not the tafsir itself." },
+      ],
+    },
+    "tafsir-al-tabari": {
+      type: "tafsir",
+      book_id: "7798",
+      title: "تفسير الطبري = جامع البيان عن تأويل آي القرآن - ت التركي (دار هجر)",
+      numbering: "لا ترقيم أحاديث؛ يُستدل بالسورة والآية",
+      numbering_roman: "Abdullah al-Turki (Dar Hajar, 1422/2001), 26 vols (24 + indexes)",
+      note: "Ayah-addressable only (specialnumber2id → -1, checked 2026-09-03). ترقيم الكتاب موافق للمطبوع. Last page id 16700; every surah has a TOC entry (index in src/data/tafsir-index.mjs). Ayah blocks are printed as «﴿…(n)﴾» and each ayah's discussion opens «القول في تأويل قوله: ﴿…﴾».",
+      other_editions: [
+        { book_id: "43", title: "تفسير الطبري جامع البيان - ط دار التربية والتراث", note: "different pagination (older print)." },
+      ],
+    },
+    "tafsir-al-qurtubi": {
+      type: "tafsir",
+      book_id: "20855",
+      title: "تفسير القرطبي = الجامع لأحكام القرآن - ت البردوني وأطفيش (دار الكتب المصرية)",
+      numbering: "لا ترقيم أحاديث؛ يُستدل بالسورة والآية",
+      numbering_roman: "Ahmad al-Barduni & Ibrahim Atfayyish (Dar al-Kutub al-Misriyya, 2nd ed. 1384/1964), 20 parts in 10 vols",
+      note: "Ayah-addressable only (specialnumber2id → -1, checked 2026-09-03). ترقيم الكتاب موافق للمطبوع — the pagination cited worldwide for al-Qurtubi. Last page id 7453; every surah has a TOC entry. Ayahs are marked by editorial headings «[سورة X (n): آية m]» (no ﴿…﴾ brackets).",
+      other_editions: [
+        { book_id: "1234", title: "درر من تفسير القرطبي", note: "selected excerpts, not the tafsir itself." },
+        { book_id: "26047", title: "التعليق على تفسير القرطبي - عبد الكريم الخضير", note: "a modern commentary on the tafsir." },
       ],
     },
   },

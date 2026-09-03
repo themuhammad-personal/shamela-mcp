@@ -6,6 +6,8 @@ import {
   extractHadith,
   detectAyahs,
   detectQuranBracketAyahs,
+  ayahHeadingInParagraph,
+  quranBracketAyahsInParagraph,
   surahFromHeading,
   surahsFromHeading,
   surahHeadingInParagraph,
@@ -172,6 +174,89 @@ test("surahFromHeading: every heading shape that book 8473 really uses (live TOC
   for (const [heading, expected] of cases) assert.equal(surahFromHeading(heading), expected, heading);
   assert.deepEqual(surahsFromHeading("تفسير سورتي المعوذتين"), [113, 114]);
   assert.deepEqual(surahsFromHeading("تفسير سورة الفلق"), [113]);
+});
+
+test("surahFromHeading: every heading shape in Tabari 7798's live TOC (2026-09-03) — Kufan-formula prefixes and quoted opening words", () => {
+  const cases = [
+    ["القول في تأويل فاتحة الكتاب", 1],
+    ["القول في تفسير السورة التي يذكر فيها البقرة", 2],
+    ["تفسير السورة التى يذكر فيها المائدة", 5],
+    ["القول في تفسير السورة التي يذكر فيها يونس ﷺ", 10],
+    ["أول تفسير السورة التي يذكر فيها الرعد", 13],
+    ["تفسير سورة بنى إسرائيل", 17],
+    ['تفسير سورة "قد أفلح المؤمنون"', 23],
+    ["تفسير سورة حم المؤمن", 40],
+    ['تفسير سورة "حم عسق"', 42],
+    ['تفسير سورة "والنجم"', 53],
+    ["تفسير سورة اقتربت الساعة", 54],
+    ['تفسير السورة التي يذكر فيها "الحديد"', 57],
+    ['تفسير سورة "المنافقين"', 63],
+    ['تفسير سورة "ن"', 68],
+    ["تفسير سورة [هل أتى على الإنسان]", 76],
+    ['تفسير سورة "والمرسلات"', 77],
+    ['تفسير سورة "عم يتساءلون"', 78],
+    ['تفسير سورة "إذا الشمس كورت"', 81],
+    ['تفسير سورة "إذا السماء انفطرت"', 82],
+    ['تفسير سورة "ويل للمطففين"', 83],
+    ['تفسير سورة "إذا السماء انشقت"', 84],
+    ['تفسير "سورة البروج"', 85],
+    ['تفسير سورة "والسماء والطارق"', 86],
+    ['تفسير سورة "والفجر"', 89],
+    ['تفسير سورة "والتين"', 95],
+    ['تفسير سورة "والعاديات"', 100],
+    ['تفسير سورة "ألهاكم"', 102],
+    ['تفسير سورة "والعصر"', 103],
+    ['تفسير سورة "أرأيت"', 107],
+    ['تفسير سورة "الناس"', 114],
+  ];
+  for (const [heading, expected] of cases) assert.equal(surahFromHeading(heading), expected, heading);
+  // The formula prefix alone (an ayah sub-heading) must NOT become a surah.
+  assert.equal(surahFromHeading("القول في تأويل قوله: ﴿إن الدين عند الله الإسلام﴾."), 0);
+  assert.equal(surahFromHeading("القول في تأويل الاستعاذة"), 0);
+  assert.equal(surahFromHeading("تفسير البسملة"), 0);
+  assert.equal(surahFromHeading("ذكر من قال ذلك"), 0);
+});
+
+test("surahFromHeading: Qurtubi 20855 TOC shapes — «براءة», stray «و -», fused «والطور»", () => {
+  const cases = [
+    ["تفسير سورة براءة", 9],
+    ["تفسير سورة يونس عليه السلام", 10],
+    ["سورة يوسف عليه السلام", 12],
+    ["تفسير سورة مريم عليها السلام", 19],
+    ["سورة سبإ", 34],
+    ["تفسير سورة الجاثية -", 45],
+    ["تفسير سورة ق -", 50],
+    ["تفسير سورة و - الذاريات", 51],
+    ["تفسير سورة والطور", 52],
+    ["تفسير سورة والنجم", 53],
+    ["تفسير سورة المنافقين", 63],
+    ["تفسير سورة ن والقلم", 68],
+    ["تفسير سورة عم و - تسمى سورة النبأ", 78],
+    ["تفسير سورة والليل", 92],
+    ["تفسير سورة والعاديات", 100],
+    ["تفسير سورة والعصر", 103],
+    ["تفسير سورة تبت", 111],
+  ];
+  for (const [heading, expected] of cases) assert.equal(surahFromHeading(heading), expected, heading);
+  // Qurtubi's per-ayah sub-headings are NOT surah headings.
+  assert.equal(surahFromHeading("[سورة البقرة (٢): آية ٨٠]"), 2, "loose (name is there) — the builder only uses top-level TOC entries and in-text headings are filtered separately");
+  assert.deepEqual(surahHeadingInParagraph("[سورة البقرة (٢): آية ٨٠]"), [], "an ayah heading inside the page text must not restart the surah");
+});
+
+test("ayahHeadingInParagraph / quranBracketAyahsInParagraph: Qurtubi's editorial «[سورة X (n): آية m]» headings (live pages 482 & 7449, 2026-09-03)", () => {
+  assert.deepEqual(ayahHeadingInParagraph("[سورة البقرة (٢): آية ٨٠]", 2), [80]);
+  assert.deepEqual(ayahHeadingInParagraph("[سورة البقرة (٢): الآيات ٨١ إلى ٨٢]", 2), [81, 82]);
+  assert.deepEqual(ayahHeadingInParagraph("[سورة الناس (١١٤): الآيات ١ الى ٣]", 114), [1, 2, 3]);
+  assert.deepEqual(ayahHeadingInParagraph("[سورة البقرة (٢): آية ٨٠]", 3), [], "surah number in the heading must match");
+  assert.deepEqual(ayahHeadingInParagraph("[سورة الناس (١١٤): آية ٩]", 114), [], "beyond the surah's length → dropped, never clamped");
+  assert.deepEqual(ayahHeadingInParagraph("سورة البقرة: ٢٥٥", 2), [], "a bare reference is not a heading");
+  assert.deepEqual(ayahHeadingInParagraph("قال في سورة البقرة (٢): آية ٨٠ ما نصه …", 2), [], "must be the whole paragraph");
+  assert.deepEqual(quranBracketAyahsInParagraph("[سورة البقرة (٢): آية ٨٠]", 2), [80]);
+  assert.deepEqual(
+    detectQuranBracketAyahs(["[تفسير سورة الناس]", "بِسْمِ اللَّهِ الرَّحْمنِ الرَّحِيمِ", "[سورة الناس (١١٤): الآيات ١ الى ٣]", "قُلْ أَعُوذُ بِرَبِّ النَّاسِ (١) مَلِكِ النَّاسِ (٢) إِلهِ النَّاسِ (٣)"], 114),
+    [1, 2, 3],
+    "the un-bracketed ayah text's (n) numbers are NOT counted; only the heading is",
+  );
 });
 
 test("surahHeadingInParagraph: in-text surah headings only, never prose mentions", () => {

@@ -27,7 +27,7 @@ import {
 import { detectHadithNumbers, detectAyahs, gradingAcrossPages } from "./lib/citation-detect.mjs";
 import { normalizeArabic } from "./lib/arabic.mjs";
 
-export const SERVER_VERSION = "2.3.0";
+export const SERVER_VERSION = "2.4.0";
 
 const response = (x) => ({ content: [{ type: "text", text: JSON.stringify(x, null, 2) }] });
 
@@ -196,8 +196,26 @@ export function createServer(client = createClient({ text: createHttp().text }))
     },
   );
 
-  tool("get_author_books", "একজন লেখকের Shamela author page ও তার বই।", { author_id: idParam }, async (x) =>
-    response(await client.authorBooks(x.author_id)),
+  tool(
+    "get_author_books",
+    "একজন লেখকের Shamela author page: তার বই + «تعريف بالمؤلف» জীবনী (biography: headline, full_name, born/died hijri & CE, biography বুলেট, works, references, source — সাধারণত «الأعلام» للزركلي থেকে উদ্ধৃত; পাতায় না থাকলে biography:null + biography_status)।",
+    { author_id: idParam },
+    async (x) => response(await client.authorBooks(x.author_id)),
+  );
+
+  tool(
+    "get_narrator_biography",
+    "হাদিস রাবীর তরজমা (رجال card): shamela.ws/narrator/<id> — সনদের প্রতিটি নামে এই লিংক থাকে (get_book_page / get_hadith_by_number-এর isnad-এ)। ফেরত: নাম, লকব, কুনিয়া, নসব, আকীদা, জন্ম/মৃত্যু (হিজরি সংখ্যাসহ), তাকরীবের তবকা, ইবনে হাজার ও যাহাবীর রুতবা (Shamela যা ছাপে, হুবহু উদ্ধৃত), এবং «الجرح والتعديل» তালিকা — প্রতিটি নাকিদের নামে তার উক্তি + উৎস (যেমন [تهذيب التهذيب (3/ 28)])। কোনো গণনাকৃত 'reliability' নেই; শুধু উদ্ধৃত ও attributed উক্তি।",
+    { narrator_id: idParam },
+    async (x) => {
+      const r = await client.narratorTarjama(x.narrator_id);
+      return response({
+        ...r,
+        note: r.found
+          ? "রুতবা ও জারহ-তাদীলের উক্তিগুলো Shamela-র narrator card থেকে হুবহু; প্রতিটির উৎস ব্র্যাকেটে। চূড়ান্ত হুকুম নিজে দিন না — উদ্ধৃতি দিন।"
+          : "এই narrator_id-তে Shamela কোনো তরজমা দেখায়নি। সনদের নামের /narrator/<id> লিংক থেকে id নিন।",
+      });
+    },
   );
 
   tool("get_recently_added", "Shamela homepage-এ সাম্প্রতিক যোগ হওয়া বই।", {}, async () =>
@@ -292,7 +310,7 @@ export function createServer(client = createClient({ text: createHttp().text }))
   // --- Priority 2: ayah-addressable tafsir retrieval ---
   tool(
     "get_tafsir_by_ayah",
-    "তাফসির বই (book_id) + (surah, ayah) → সেই আয়াতের আলোচনার পৃষ্ঠা। উৎস: persisted সূচি (src/data/tafsir-index.mjs: প্রতিটি সূরার পৃষ্ঠা-পরিসর + জানা আয়াত→পৃষ্ঠা)। আয়াত সূচিতে না থাকলে শুধু সেই সূরার পরিসরের ভেতরে ﴿…(n)…﴾ marker ধরে bisection (সর্বোচ্চ ২০ পৃষ্ঠা পড়া) — TOC থেকে বই হাঁটা হয় না। ফলাফলে precision: exact | nearest_before | surah_start (ফাতিহা inline উদ্ধৃত, ব্লক নেই)। ইবনে কাসীর canonical = 8473 (১১৪ সূরার পরিসর সূচিভুক্ত)।",
+    "তাফসির বই (book_id) + (surah, ayah) → সেই আয়াতের আলোচনার পৃষ্ঠা। উৎস: persisted সূচি (src/data/tafsir-index.mjs: প্রতিটি সূরার পৃষ্ঠা-পরিসর + জানা আয়াত→পৃষ্ঠা)। আয়াত সূচিতে না থাকলে শুধু সেই সূরার পরিসরের ভেতরে ﴿…(n)…﴾ marker ধরে bisection (সর্বোচ্চ ২০ পৃষ্ঠা পড়া) — TOC থেকে বই হাঁটা হয় না। ফলাফলে precision: exact | nearest_before | surah_start (ফাতিহা inline উদ্ধৃত, ব্লক নেই)। সূচিভুক্ত তাফসির (প্রতিটিতে ১১৪ সূরার পরিসর): ইবনে কাসীর 8473, তাবারী 7798 (ت التركي), কুরতুবী 20855 (দারুল কুতুব আল-মিসরিয়্যাহ; আয়াত-শিরোনাম «[سورة X (n): آية m]» ধরে)।",
     { book_id: idParam, surah: z.number().int().min(1).max(114), ayah: z.number().int().min(1) },
     async (x) => {
       let res = resolveTafsirAyah(x.book_id, x.surah, x.ayah);
@@ -305,7 +323,7 @@ export function createServer(client = createClient({ text: createHttp().text }))
           ...canonicalFields({ book_id: x.book_id }),
           hint:
             res.reason === "no_tafsir_index_for_book"
-              ? "এই book_id-র জন্য persisted তাফসির সূচি নেই (বর্তমানে শুধু 8473)। scripts/build-tafsir-index.mjs --tafsir <id> চালিয়ে সূচি তৈরি করুন, অথবা get_book_details → get_book_page ব্যবহার করুন।"
+              ? "এই book_id-র জন্য persisted তাফসির সূচি নেই (বর্তমানে: ইবনে কাসীর 8473, তাবারী 7798, কুরতুবী 20855)। scripts/build-tafsir-index.mjs --tafsir <id> চালিয়ে সূচি তৈরি করুন, অথবা get_book_details → get_book_page ব্যবহার করুন।"
               : "get_book_details দিয়ে TOC দেখে get_book_page ব্যবহার করুন।",
         });
       const page = await client.bookPage(res.book_id, res.page);
@@ -337,7 +355,7 @@ export function createServer(client = createClient({ text: createHttp().text }))
   // --- canonical edition directory ---
   tool(
     "list_canonical_editions",
-    "যাচাইকৃত canonical সংস্করণের তালিকা: প্রতিটি হাদিসগ্রন্থ/তাফসিরের কোন Shamela book_id standard নম্বর বহন করে (বুখারী 1681, মুসলিম 1727, আবু দাউদ 1726, তিরমিযী 1435, নাসাঈ 829, ইবনে মাজাহ 1198, মুয়াত্তা 1699, মুসনাদ আহমাদ 25794, ইবনে কাসীর 8473), নম্বরের উৎস, শেষ নম্বর, এবং একই গ্রন্থের non-canonical সংস্করণসমূহ।",
+    "যাচাইকৃত canonical সংস্করণের তালিকা: প্রতিটি হাদিসগ্রন্থ/তাফসিরের কোন Shamela book_id standard নম্বর বহন করে (বুখারী 1681, মুসলিম 1727, আবু দাউদ 1726, তিরমিযী 1435, নাসাঈ 829, ইবনে মাজাহ 1198, মুয়াত্তা 1699, মুসনাদ আহমাদ 25794, ইবনে কাসীর 8473, তাবারী 7798, কুরতুবী 20855), নম্বরের উৎস, শেষ নম্বর, এবং একই গ্রন্থের non-canonical সংস্করণসমূহ।",
     {},
     async () => response({ ...canonicalMapStatus(), editions: CANONICAL_EDITIONS }),
   );

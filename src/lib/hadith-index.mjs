@@ -27,7 +27,7 @@
 
 import index from "../data/hadith-index.mjs";
 import tafsirIndex from "../data/tafsir-index.mjs";
-import { detectHadithMarkers, extractHadith, surahsFromHeading, detectQuranBracketAyahs, AYAH_COUNTS } from "./citation-detect.mjs";
+import { detectHadithMarkers, extractHadith, surahsFromHeading, isAyahHeading, detectQuranBracketAyahs, AYAH_COUNTS } from "./citation-detect.mjs";
 import { canonicalRecord } from "../canonical-editions.mjs";
 
 export function indexStatus(idx = index, tIdx = tafsirIndex) {
@@ -378,6 +378,9 @@ export function surahStartsFromToc(toc) {
   for (const t of toc ?? []) {
     const page = /\/book\/\d+\/(\d+)/.exec(t.href ?? "")?.[1];
     if (!page) continue;
+    // Qurtubi 20855 nests «[سورة الفاتحة (١): آية ١]» under the basmala chapter
+    // (p.97) BEFORE «تفسير سورة الفاتحة» (p.114): ayah headings never start a surah.
+    if (isAyahHeading(t.title)) continue;
     const ss = surahsFromHeading(t.title);
     for (const s of ss) {
       const prev = starts.get(s);

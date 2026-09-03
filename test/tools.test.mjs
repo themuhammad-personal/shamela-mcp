@@ -44,6 +44,10 @@ function mockClient(overrides = {}) {
     titleSearch: async () => ({ results: [{ book_id: "735", title: "صحيح البخاري - ت البغا" }, { book_id: "1681", title: "صحيح البخاري - ط السلطانية" }, { book_id: "5", title: "شرح صحيح البخاري" }], total_available: 3 }),
     searchLibrary: async () => ({ results: [{ book_id: "123", page_id: "10" }] }),
     authorBooks: async () => ({ books: [] }),
+    narratorTarjama: async (id) =>
+      id === "4210"
+        ? { narrator_id: id, url: `https://shamela.ws/narrator/${id}`, found: true, name: "عبد الرزاق بن همام", rank_ibn_hajar: "ثقة حافظ", jarh_wa_tadil: [{ critic: "ابن حجر", statements: [{ text: "ثقة حافظ", source: "تقريب التهذيب (1/ 354)" }] }] }
+        : { narrator_id: id, url: `https://shamela.ws/narrator/${id}`, found: false, reason: "no_tarjama_content", fields: {}, jarh_wa_tadil: [] },
     recent: async () => ({ books: [] }),
     allBooks: async () => ({ books: [] }),
     ...overrides,
@@ -54,9 +58,10 @@ const s = createServer(mockClient());
 const call = (name, args) => s._registeredTools[name].handler(args);
 const json = async (name, args) => JSON.parse((await call(name, args)).content[0].text);
 
-test("server registers 13 tools via registerTool and reports the package version", () => {
-  assert.equal(Object.keys(s._registeredTools).length, 13);
-  assert.equal(SERVER_VERSION, "2.3.0");
+test("server registers 14 tools via registerTool and reports the package version", () => {
+  assert.equal(Object.keys(s._registeredTools).length, 14);
+  assert.equal(SERVER_VERSION, "2.4.0");
+  assert.ok(s._registeredTools.get_narrator_biography, "Roadmap 3.3 tool present");
   for (const t of Object.values(s._registeredTools)) assert.ok(t.inputSchema, "every tool has an input schema");
 });
 
@@ -212,7 +217,12 @@ test("get_tafsir_by_ayah: al-Fatiha (no ﴿…﴾ blocks in Ibn Kathir) → sura
 
 test("list_canonical_editions returns the whitelist with provenance", async () => {
   const d = await json("list_canonical_editions", {});
-  assert.equal(d.verified_book_ids, 9);
+  assert.equal(d.verified_book_ids, 11);
+  assert.deepEqual(
+    d.editions.filter((e) => e.type === "tafsir").map((e) => e.book_id).sort(),
+    ["20855", "7798", "8473"],
+    "Ibn Kathir, Tabari (ت التركي) and Qurtubi (دار الكتب المصرية) are the verified tafsir editions",
+  );
   assert.ok(d.editions.find((e) => e.key === "sahih-al-bukhari").book_id === "1681");
 });
 
@@ -354,4 +364,18 @@ test("get_hadith_by_number: live failure is a structured error too", async () =>
   const { out, data } = await failCall(new Error("Shamela returned HTTP 503"), "get_hadith_by_number", { book_id: "1727", hadith_number: "8" });
   assert.equal(out.isError, true);
   assert.equal(data.status, 503);
+});
+
+test("get_narrator_biography: passes the parsed card through and never invents a verdict", async () => {
+  const r = await json("get_narrator_biography", { narrator_id: "4210" });
+  assert.equal(r.found, true);
+  assert.equal(r.name, "عبد الرزاق بن همام");
+  assert.equal(r.rank_ibn_hajar, "ثقة حافظ");
+  assert.equal(r.jarh_wa_tadil[0].statements[0].source, "تقريب التهذيب (1/ 354)");
+  assert.equal("reliability" in r, false);
+  assert.match(r.note, /হুবহু/);
+  const miss = await json("get_narrator_biography", { narrator_id: "999999" });
+  assert.equal(miss.found, false);
+  assert.equal(miss.reason, "no_tarjama_content");
+  assert.match(miss.note, /narrator_id/);
 });
