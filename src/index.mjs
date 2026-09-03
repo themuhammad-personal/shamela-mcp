@@ -1,5 +1,5 @@
 /**
- * Cloudflare Worker entry point (reconstructed source — supersedes worker.mjs).
+ * Cloudflare Worker entry point.
  *
  * Exposes the MCP server over Streamable HTTP at `/mcp`.
  */

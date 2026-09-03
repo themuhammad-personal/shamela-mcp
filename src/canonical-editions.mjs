@@ -1,239 +1,159 @@
 /**
- * Canonical-edition metadata for high-traffic reference works.
+ * Canonical-edition lookup for high-traffic reference works.
  *
- * Purpose (Roadmap Phase 1.1 / Priority 3):
- *   shamela.ws indexes several editions of the same classical work (e.g. five
- *   editions of Sahih al-Bukhari). Only ONE of them uses the globally-standard
- *   hadith numbering that scholars cite worldwide (the numbering printed in
- *   Bangla/Urdu/English translations). This module tells the caller which one
- *   that is, via an `is_canonical_numbering` flag, so the model never guesses.
+ * shamela.ws hosts several editions of each classical collection (five of
+ * Sahih al-Bukhari alone). Only one per work carries the hadith numbering that
+ * translations and takhrij cite worldwide. This module answers "is this
+ * book_id that edition?" — from a HAND-VERIFIED whitelist, never a guess.
  *
- * IMPORTANT — accuracy discipline:
- *   - The numbering authorities below are well-established scholarly facts
- *     (e.g. Fuad Abd al-Baqi's numbering for Bukhari/Muslim is what the
- *     worldwide translations follow). They are NOT inferred at runtime.
- *   - Exact shamela.ws `book_id`s and exact title strings are **pending live
- *     verification** (this sandbox cannot reach shamela.ws). Resolve them with
- *     `scripts/resolve-canonical-editions.mjs` once you have network access.
- *   - We never *invent* grading or numbers; a non-match simply returns false.
+ * Why a whitelist and not heuristics:
+ *   The earlier approach matched the محقق name against the numbering
+ *   authority. On real data that is WRONG in both directions:
+ *     - 1681 (Bukhari ط السلطانية) is muhaqqiq'd by محمد زهير الناصر but uses
+ *       Abd al-Baqi's numbering → false negative.
+ *     - شرح/مختصر titles that mention the same محقق → false positive.
+ *   `src/data/canonical-book-ids.mjs` documents how each id was verified.
+ *
+ * Title-based detection is retained ONLY to say "this looks like the same
+ * work; the canonical edition is book_id X" — it never asserts canonical.
  */
 
+import { normalizeArabic } from "./lib/arabic.mjs";
 import canonicalBookIds from "./data/canonical-book-ids.mjs";
 
-/**
- * Canonical hadith collections and the numbering authority whose edition is
- * the worldwide citation standard.
- *
- * `key`            stable slug
- * `titleSignatures` normalized-Arabic title fragments that identify the work
- * `authorities`     normalized-Arabic name fragments of the muhaqqiq/numbering
- *                   authority whose edition uses the standard numbering
- * `authorityRoman`  Latin rendering, for humans/tool descriptions
- * `note`            short provenance note
- */
-export const CANONICAL_EDITIONS = [
-  {
-    key: "sahih-al-bukhari",
-    titleSignatures: ["صحيح البخاري", "الجامع الصحيح", "صحيح البخاري المسند"],
-    authorities: ["محمد فؤاد عبد الباقي", "فؤاد عبد الباقي"],
-    authorityRoman: "Muhammad Fuad Abd al-Baqi",
-    note: "Fuad Abd al-Baqi numbering is the standard cited in worldwide translations (e.g. Muhsin Khan / Bangla / Urdu prints).",
-  },
-  {
-    key: "sahih-muslim",
-    titleSignatures: ["صحيح مسلم", "المسند الصحيح"],
-    authorities: ["محمد فؤاد عبد الباقي", "فؤاد عبد الباقي"],
-    authorityRoman: "Muhammad Fuad Abd al-Baqi",
-    note: "Fuad Abd al-Baqi numbering is the standard for Sahih Muslim.",
-  },
-  {
-    key: "jami-at-tirmidhi",
-    titleSignatures: ["جامع الترمذي", "سنن الترمذي", "الجامع المختصر"],
-    authorities: ["أحمد محمد شاكر", "احمد شاكر"],
-    authorityRoman: "Ahmad Muhammad Shakir",
-    note: "Ahmad Shakir's tahqiq + numbering is the standard for Tirmidhi.",
-  },
-  {
-    key: "sunan-abu-dawud",
-    titleSignatures: ["سنن أبي داود", "سنن ابي داود"],
-    authorities: ["محمد محيي الدين عبد الحميد", "محيي الدين عبد الحميد"],
-    authorityRoman: "Muhammad Muhyi al-Din Abd al-Hamid",
-    note: "Muhyi al-Din Abd al-Hamid's numbering is the standard for Abu Dawud.",
-  },
-  {
-    key: "sunan-an-nasai",
-    titleSignatures: ["سنن النسائي", "المجتبى", "السنن الصغرى"],
-    authorities: ["عبد الفتاح أبو غدة", "عبد الفتاح ابو غدة", "ابو غدة", "أبو غدة"],
-    authorityRoman: "Abd al-Fattah Abu Ghuddah",
-    note: "Abu Ghuddah's numbering is the standard for Sunan al-Nasa'i (al-Mujtaba).",
-  },
-  {
-    key: "sunan-ibn-majah",
-    titleSignatures: ["سنن ابن ماجه"],
-    authorities: ["محمد فؤاد عبد الباقي", "فؤاد عبد الباقي"],
-    authorityRoman: "Muhammad Fuad Abd al-Baqi",
-    note: "Fuad Abd al-Baqi numbering is the standard for Ibn Majah.",
-  },
-  {
-    key: "musnad-ahmad",
-    titleSignatures: ["مسند الإمام أحمد", "مسند الامام احمد", "مسند أحمد بن حنبل"],
-    authorities: ["أحمد محمد شاكر", "احمد شاكر"],
-    authorityRoman: "Ahmad Muhammad Shakir",
-    note: "Ahmad Shakir's numbered edition is the standard for Musnad Ahmad.",
-  },
-  {
-    key: "muwatta-malik",
-    titleSignatures: ["موطأ مالك", "الموطأ"],
-    authorities: ["محمد فؤاد عبد الباقي", "فؤاد عبد الباقي"],
-    authorityRoman: "Muhammad Fuad Abd al-Baqi",
-    note: "Fuad Abd al-Baqi's two-volume Muwatta is a common citation standard.",
-  },
-];
+export { normalizeArabic };
+
+/** Normalized title fragments that identify a *work* (not an edition). */
+const WORK_SIGNATURES = {
+  "sahih-al-bukhari": ["صحيح البخاري", "الجامع المسند الصحيح"],
+  "sahih-muslim": ["صحيح مسلم", "المسند الصحيح المختصر"],
+  "sunan-abi-dawud": ["سنن ابي داود", "سنن أبي داود"],
+  "jami-at-tirmidhi": ["سنن الترمذي", "جامع الترمذي", "الجامع الكبير"],
+  "sunan-an-nasai": ["سنن النسائي", "المجتبي من السنن", "السنن الصغري"],
+  "sunan-ibn-majah": ["سنن ابن ماجه", "سنن ابن ماجة"],
+  "muwatta-malik": ["موطا مالك", "الموطا"],
+  "musnad-ahmad": ["مسند احمد", "مسند الامام احمد"],
+  "tafsir-ibn-kathir": ["تفسير ابن كثير", "تفسير القران العظيم"],
+};
+
+/** Words that mark a derivative work (commentary, abridgement, grading…). */
+const DERIVATIVE = /(^|\s)(شرح|حاشي[ةه]|مختصر|تهذيب|صحيح وضعيف|ضعيف|زوائد|اطراف|أطراف|فتح|عون|تحف[ةه]|منح[ةه]|عمد[ةه]|ارشاد|إرشاد|كوثر|فيض|مرقا[ةه]|ذخير[ةه]|تعليق|تخريج|فهرس|اسانيد|أسانيد|رجال|مسند الشاميين)(\s|$)/;
+
+const EDITIONS = canonicalBookIds?.editions ?? {};
+
+/** Edition key → full record (with key), for iteration. */
+export const CANONICAL_EDITIONS = Object.entries(EDITIONS).map(([key, rec]) => ({ key, ...rec }));
 
 /**
- * Arabic normalization matching the worker's own `normalizeArabic`:
- * strip harakat/tatweel, fold hamza forms, ya/alef-maqsura/ta-marbuta, collapse
- * whitespace, lowercase. Kept self-contained so this module is unit-testable
- * without the deployed bundle.
+ * book_id → canonical record. Only ids verified in the data file are here.
+ * Exported as a Map (same shape the tools/tests already consume).
  */
-export function normalizeArabic(value) {
-  return String(value ?? "")
-    .replace(/<[^>]*>/g, " ")
-    .normalize("NFD")
-    .replace(/[\u064B-\u065F\u0670\u06D6-\u06ED]/g, "")
-    .replace(/[أإآٱ]/g, "ا")
-    .replace(/ى/g, "ي")
-    .replace(/ة/g, "ه")
-    .replace(/ـ/g, "")
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .trim();
-}
+export const CANONICAL_BOOK_IDS = new Map(
+  CANONICAL_EDITIONS.map((rec) => [String(rec.book_id), rec]),
+);
 
-function includes(a, b) {
-  return a.length > 0 && b.length > 0 && a.includes(b);
+/** book_id → { key, canonical_book_id, note } for every *known non-canonical* edition. */
+export const OTHER_EDITION_IDS = new Map(
+  CANONICAL_EDITIONS.flatMap((rec) =>
+    (rec.other_editions ?? []).map((o) => [
+      String(o.book_id),
+      { key: rec.key, canonical_book_id: String(rec.book_id), canonical_title: rec.title, title: o.title, note: o.note },
+    ]),
+  ),
+);
+
+/** Provenance of the whitelist — surfaced in tool output. */
+export function canonicalMapStatus() {
+  return {
+    resolved_at: canonicalBookIds?.generated_at ?? null,
+    source: canonicalBookIds?.source ?? null,
+    verified_book_ids: CANONICAL_BOOK_IDS.size,
+    known_other_editions: OTHER_EDITION_IDS.size,
+  };
 }
 
 /**
- * Decide whether a book record corresponds to a canonical (standard-numbering)
- * edition.
+ * Which *work* does this title belong to (if any)? Title-only, so it can only
+ * ever say "same work" — never "canonical edition".
  *
- * @param {{title?: string, muhaqqiq?: string, author?: string, book_id?: string}} book
- *   - `title`    book title (Arabic), e.g. from search results or book details
- *   - `muhaqqiq` the *tahqiq/numbering authority* name (shamela's "المحقق"
- *                field). This is what distinguishes editions — NOT the original
- *                author (on shamela, "author" is usually the original author,
- *                e.g. al-Bukhari, who is the same across editions).
- *   - `author`   accepted as a fallback for `muhaqqiq` when callers only have
- *                the author link (may be the original author — weaker signal).
- * @returns {null | {key, authorityRoman, note, confidence: "author" | "title"}}
- *
- * Matching discipline (three cases):
- *   1. Title matches AND muhaqqiq matches the canonical authority
- *      → `confidence: "author"` (strong; assert canonical = true).
- *   2. Title matches but muhaqqiq is KNOWN and is a DIFFERENT person
- *      → `null` (this is a non-canonical edition of the same work).
- *   3. Title matches but muhaqqiq is unknown/empty
- *      → `confidence: "title"` (weak; callers must NOT assert canonical on it).
+ * @returns {null | { key, canonical_book_id, canonical_title, derivative: boolean }}
  */
-export function detectCanonicalEdition(book = {}) {
-  const title = normalizeArabic(book.title);
-  const muhaqqiq = normalizeArabic(book.muhaqqiq ?? book.author ?? "");
-  if (!title) return null;
-
-  for (const edition of CANONICAL_EDITIONS) {
-    const titleHit = edition.titleSignatures.some((sig) => includes(title, normalizeArabic(sig)));
-    if (!titleHit) continue;
-
-    if (muhaqqiq) {
-      const authorityHit = edition.authorities.some((a) => includes(muhaqqiq, normalizeArabic(a)));
-      if (authorityHit) {
-        return {
-          key: edition.key,
-          authorityRoman: edition.authorityRoman,
-          note: edition.note,
-          confidence: "author",
-        };
-      }
-      // Same work, different muhaqqiq → a non-canonical edition.
-      return null;
-    }
-    // No muhaqqiq info available: title-only, weak.
+export function detectWork(title) {
+  const t = normalizeArabic(title);
+  if (!t) return null;
+  for (const [key, sigs] of Object.entries(WORK_SIGNATURES)) {
+    if (!sigs.some((s) => t.includes(normalizeArabic(s)))) continue;
+    const rec = EDITIONS[key];
     return {
-      key: edition.key,
-      authorityRoman: edition.authorityRoman,
-      note: edition.note,
-      confidence: "title",
+      key,
+      canonical_book_id: rec ? String(rec.book_id) : null,
+      canonical_title: rec?.title ?? null,
+      derivative: DERIVATIVE.test(t),
     };
   }
   return null;
 }
 
 /**
- * Convenience: boolean canonical flag for a book record.
- * Returns true only on an authority-level match; title-only matches are
- * reported as `false` (unconfirmed) unless `allowTitleOnly` is set.
+ * Backwards-compatible detector. Returns:
+ *   - `{ confidence: "verified", ... }` when book_id is on the whitelist
+ *   - `{ confidence: "other_edition", ... }` when book_id is a known non-canonical edition
+ *   - `{ confidence: "title", ... }` when only the title suggests the work
+ *   - `null` otherwise
+ * Never "author": the محقق name is not evidence of numbering (see header).
  */
-export function isCanonicalNumbering(book = {}, { allowTitleOnly = false } = {}) {
-  const hit = detectCanonicalEdition(book);
-  if (!hit) return false;
-  if (hit.confidence === "author") return true;
-  return allowTitleOnly;
-}
-
-/**
- * Resolved book_id → canonical mapping, populated by
- * `scripts/resolve-canonical-editions.mjs` (needs network). Kept separate from
- * the signature detector so `search_books_by_name` (which lacks author info)
- * can answer instantly from a precomputed map instead of per-book fetches.
- *
- * The data lives in `src/data/canonical-book-ids.mjs`, which the resolver
- * *writes* (and the `Refresh citation index` CI workflow commits back). Until
- * that job has run, the map is empty and every lookup falls through to
- * signature detection — which by design never asserts canonical on a guess.
- */
-export const CANONICAL_BOOK_IDS = new Map(
-  Object.entries(canonicalBookIds?.editions ?? {}).map(([key, rec]) => [
-    String(rec.book_id),
-    { key, ...rec },
-  ]),
-);
-
-/** Provenance of the resolved map — surfaced in tool output so a caller can
- *  tell "verified against live data on <date>" from "seed, never resolved". */
-export function canonicalMapStatus() {
+export function detectCanonicalEdition(book = {}) {
+  const id = book.book_id != null ? String(book.book_id) : "";
+  if (id && CANONICAL_BOOK_IDS.has(id)) {
+    const rec = CANONICAL_BOOK_IDS.get(id);
+    return { key: rec.key, authorityRoman: rec.numbering_roman, note: rec.note, confidence: "verified" };
+  }
+  if (id && OTHER_EDITION_IDS.has(id)) {
+    const o = OTHER_EDITION_IDS.get(id);
+    return {
+      key: o.key,
+      authorityRoman: EDITIONS[o.key]?.numbering_roman ?? null,
+      note: o.note,
+      confidence: "other_edition",
+      canonical_book_id: o.canonical_book_id,
+      canonical_title: o.canonical_title,
+    };
+  }
+  const work = detectWork(book.title);
+  if (!work) return null;
   return {
-    resolved_at: canonicalBookIds?.generated_at ?? null,
-    source: canonicalBookIds?.source ?? null,
-    verified_book_ids: CANONICAL_BOOK_IDS.size,
+    key: work.key,
+    authorityRoman: EDITIONS[work.key]?.numbering_roman ?? null,
+    note: work.derivative
+      ? "শিরোনাম বলছে এটি মূল গ্রন্থের শرح/মুখতাসার/ডেরিভেটিভ — canonical নয়।"
+      : "শুধু শিরোনাম মিলেছে; এই সংস্করণের ক্রমসংখ্যা যাচাই করা হয়নি।",
+    confidence: "title",
+    canonical_book_id: work.canonical_book_id,
+    canonical_title: work.canonical_title,
+    derivative: work.derivative,
   };
 }
 
+/** True only for whitelisted ids. `allowTitleOnly` kept for API compatibility but is ignored on purpose. */
+export function isCanonicalNumbering(book = {}) {
+  return detectCanonicalEdition(book)?.confidence === "verified";
+}
+
 /**
- * Produce the canonical annotation to attach to a book result.
- *
- * Precedence:
- *   1. `CANONICAL_BOOK_IDS` (precomputed book_id → canonical) → authoritative
- *      (`confidence: "verified"`), `is_canonical_numbering: true`.
- *   2. muhaqqiq-level detection → `confidence: "author"`, true.
- *   3. title-only detection (no muhaqqiq known) → `confidence: "title"`,
- *      `is_canonical_numbering: false` (never assert canonical on a guess).
- *   4. no match (or a *different* muhaqqiq) → `canonical_edition: null`, false.
+ * Annotation attached to every book result.
  *
  * @returns {{ is_canonical_numbering: boolean, canonical_edition: object | null }}
+ *   `canonical_edition.confidence` ∈ verified | other_edition | title.
+ *   When it is not `verified`, `canonical_book_id` tells the caller which
+ *   book_id to use instead for hadith-number lookups.
  */
 export function canonicalFields(book = {}) {
-  if (book.book_id != null && CANONICAL_BOOK_IDS.has(String(book.book_id))) {
-    const byId = CANONICAL_BOOK_IDS.get(String(book.book_id));
-    return {
-      is_canonical_numbering: true,
-      canonical_edition: { ...byId, confidence: "verified" },
-    };
-  }
   const hit = detectCanonicalEdition(book);
   if (!hit) return { is_canonical_numbering: false, canonical_edition: null };
-  if (hit.confidence === "author") {
-    return { is_canonical_numbering: true, canonical_edition: hit };
-  }
-  return { is_canonical_numbering: false, canonical_edition: hit };
+  return { is_canonical_numbering: hit.confidence === "verified", canonical_edition: hit };
+}
+
+/** Full record for a whitelisted id (or null). Used by the hadith resolver for bounds/notes. */
+export function canonicalRecord(bookId) {
+  return CANONICAL_BOOK_IDS.get(String(bookId)) ?? null;
 }

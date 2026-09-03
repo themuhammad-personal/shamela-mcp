@@ -51,7 +51,7 @@ test("details extracts title/author/metadata/toc + muhaqqiq", async () => {
   assert.equal(d.toc.length, 2);
 });
 
-test("bookPage returns content + title/author", async () => {
+test("bookPage returns content + title/author + structure", async () => {
   const c = createClient({
     text: fakeText({
       "https://shamela.ws/book/123/1": PAGE,
@@ -62,6 +62,48 @@ test("bookPage returns content + title/author", async () => {
   assert.ok(p.content.includes("حدثنا"));
   assert.equal(p.book_title, "صحيح البخاري");
   assert.equal(p.page_number, "1");
+  assert.deepEqual(p.paragraphs, ["حدثنا الحميدي ... فبينا نحن عنده"]);
+  assert.deepEqual(p.footnotes, []);
+  assert.deepEqual(p.nav, { prev: null, next: null, last: null });
+});
+
+test("details: new-layout بطاقة الكتاب (text before div.betaka-index) is parsed too", async () => {
+  const html = `
+    <h1 class="size-20"><a href="https://shamela.ws/book/1681">كتاب صحيح البخاري - ط السلطانية</a></h1>
+    <a href="/author/215">البخاري</a>
+    <div class="nass">
+      <p>الكتاب: صحيح البخاري</p>
+      <p>المؤلف: محمد بن إسماعيل البخاري</p>
+      <p>المحقق: محمد زهير بن ناصر الناصر</p>
+      <p>الناشر: دار طوق النجاة</p>
+      <p>الطبعة: الأولى، ١٤٢٢هـ</p>
+      <p>عدد الأجزاء: ٩</p>
+      <p>[ترقيم الكتاب موافق للمطبوع، وهو ضمن خدمة التخريج]</p>
+      <div class="betaka-index"><ul><li><a href="/book/1681/9">بدء الوحي</a></li></ul></div>
+    </div>`;
+  const c = createClient({ text: fakeText({ "https://shamela.ws/book/1681": html }) });
+  const d = await c.details("1681");
+  assert.equal(d.metadata.muhaqqiq, "محمد زهير بن ناصر الناصر");
+  assert.equal(d.metadata.publisher, "دار طوق النجاة");
+  assert.equal(d.metadata.parts, "٩");
+  assert.equal(d.metadata.pagination_matches_print, true);
+  assert.equal(d.metadata.hadith_numbering_service, true);
+  assert.equal(d.toc.length, 1);
+});
+
+test("hadithPageId / printedPageId parse shamela's plain-text AJAX answers", async () => {
+  const c = createClient({
+    text: fakeText({
+      "https://shamela.ws/ajax/specialnumber2id/1681/8": "19",
+      "https://shamela.ws/ajax/specialnumber2id/8473/5": "-1",
+      "https://shamela.ws/ajax/pagenum2id/1681/1/6": "10",
+      "https://shamela.ws/ajax/specialnumber2id/1/1": "<html>login</html>",
+    }),
+  });
+  assert.equal(await c.hadithPageId("1681", 8), "19");
+  assert.equal(await c.hadithPageId("8473", 5), null);
+  assert.equal(await c.printedPageId("1681", "1", "6"), "10");
+  await assert.rejects(() => c.hadithPageId("1", 1), /unexpected response/);
 });
 
 test("bookPage reuses cached details — one details fetch per book, not per page", async () => {

@@ -7,32 +7,49 @@ Hanafi-priority, four-madhhab comparison).
 
 ## Progress tracker
 
+Status as of **2026-09-03** (audited against live shamela.ws, not against the
+previous agent's claims).
+
 | Phase | Status |
 |---|---|
-| 0.1 reconstruct source | ✅ done — `src/index.mjs` + `src/lib/*.mjs` + `src/tools.mjs` |
-| 0.2 test harness | ✅ done — `node --test` with offline fixtures (60 tests) |
-| 0.3 storage decision | ✅ decided (static files → KV later); builder writes `src/data/*.mjs` |
-| 0.4 rate limiting | 🟡 partial — scripts throttle upstream calls + cache book details; the public endpoint still has no per-caller limit |
+| 0.1 reconstruct source | ✅ done — `src/index.mjs` + `src/lib/*.mjs` + `src/tools.mjs`; legacy 783 KB `src/worker.mjs` deleted |
+| 0.2 test harness | ✅ done — `node --test`, 78 offline tests incl. a **real shamela page fixture** (`test/fixtures/`) |
+| 0.3 storage decision | ✅ static data files (`src/data/*.mjs`) + live fallback; KV not needed yet |
+| 0.4 rate limiting | 🟡 upstream side done (per-isolate concurrency cap 4, 20 s timeout, 15-min cache, in-flight de-dupe, builder delay ≥250 ms). **Public `/mcp` endpoint still has no per-caller limit/auth.** |
 | 0.5 ToS/copyright note | ⏳ pending |
-| 1.1 canonical editions | ✅ wired end-to-end — detector + `src/data/canonical-book-ids.mjs` + resolver that actually writes it (live book_ids still pending a network run) |
-| 1.2 coverage gap (P5) | ✅ scripted — `npm run check:coverage` writes `reports/coverage.{json,md}` |
-| 1.3 filter docs | ✅ done — `century`/`exclude_words` documented in tool descriptions |
-| 2.1 `get_hadith_by_number` | ✅ runnable — tool + resolver + builder; index empty until a network run |
-| 2.2 reverse page→hadith | ✅ done — `hadith_numbers` on `get_book_page` |
-| 2.3 inline hadith numbers | ✅ done — deep-link on `search_library` |
-| 2.4 `get_tafsir_by_ayah` | ✅ runnable — tool + resolver + real (conservative) ayah detector |
-| 2.5 deep-link snippets | ✅ done — `hadith_numbers` attached to search hits |
-| 3.x metadata / tarjamah | ⏳ pending |
+| 0.6 CI/CD | ✅ **fixed** — deploy was broken since PR #1 (wrangler 4.128 needs Node ≥22; workflow used Node 20). Now Node 22 + `npm ci` + tests + dry-run before deploy |
+| 1.1 canonical editions | ✅ **hand-verified whitelist** of 9 book_ids (see `src/data/canonical-book-ids.mjs`), each checked against `/ajax/specialnumber2id`. The old محقق-name heuristic was wrong on real data (false negative on Bukhari 1681) and is gone. `list_canonical_editions` tool added |
+| 1.2 coverage gap (P5) | 🟡 script exists; `reports/` not yet generated (needs a network run — see workflow) |
+| 1.3 filter docs | ✅ done |
+| 2.1 `get_hadith_by_number` | ✅ **works without any prebuilt index** — uses shamela's own `رقم الحديث` lookup (`/ajax/specialnumber2id`) then verifies the «N -» marker on the fetched page; continues across page breaks; refuses out-of-range numbers; never guesses |
+| 2.2 reverse page→hadith | ✅ `hadith_numbers` on `get_book_page` now come from **on-page markers** (footnotes excluded), static index only as fallback |
+| 2.3 inline hadith numbers | 🟡 `search_library` hits carry `hadith_numbers` only when the static index has the page (index still empty) |
+| 2.4 `get_tafsir_by_ayah` | ✅ live TOC walk («تفسير سورة X» → pages → «﴿…(n)…﴾» markers), bounded; static index as cache. Ibn Kathir 8473 verified |
+| 2.5 deep-link snippets | 🟡 same dependency as 2.3 |
+| 2.6 printed page lookup | ✅ new `get_page_by_printed_number` (`/ajax/pagenum2id`) |
+| 3.x metadata / tarjamah | ⏳ pending (`/ajax/tarjama/<narrator_id>` endpoint identified) |
 | 4.x reading UX | ⏳ pending |
 
 ### Where the network-dependent scripts run
 
-`resolve:canonical`, `build:index` and `check:coverage` all need real access to
-`shamela.ws`. They do **not** need your computer: the **`Refresh citation index`**
-GitHub workflow (`.github/workflows/refresh-index.yml`) runs them on a GitHub
-runner, commits the generated `src/data/*.mjs` + `reports/*` back to the repo,
-and redeploys the Worker. Trigger it from *Actions → Refresh citation index →
-Run workflow*, or let the weekly cron do it. Nothing has to be uploaded by hand.
+`resolve:canonical` (now a **re-check** of the hand-verified whitelist),
+`build:index` and `check:coverage` need real access to `shamela.ws`. The
+**`Refresh citation index`** workflow (`.github/workflows/refresh-index.yml`,
+manual + monthly) runs them on a GitHub runner and opens a PR with
+`src/data/hadith-index.mjs` + `reports/*`. The Worker does not depend on it —
+the static index only makes lookups cheaper.
+
+### Verified shamela.ws facts (2026-09-03)
+
+- `GET /ajax/specialnumber2id/<book>/<n>` → page id; `-1` when the book has no
+  numbering; **clamps to the last page for n > last** (so on-page verification
+  is mandatory). Verified on 1681, 1727, 1726, 1435, 829, 1198, 1699, 25794.
+- Page DOM: `div.nass > p` (main), `p.hamesh` (footnotes), `#fld_part_top`
+  (volume), `#fld_goto_top` (printed page), `div.size-12 span.text-black`
+  (chapter path), nav `>`/`>>` links.
+- Muslim (1727) prints `١ - (٨) …` — the citable number is in parentheses.
+- Muwatta (1699) restarts numbering per كتاب; shamela's lookup returns the
+  *last* kitab's match for small numbers.
 
 > **Audience & language.** The end-user is a practicing `alim` who will catch a
 > wrong citation. Every feature here is judged against one question: *can the

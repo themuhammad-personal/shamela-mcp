@@ -1,6 +1,6 @@
 {
   "name": "shamela-mcp",
-  "version": "1.0.0",
+  "version": "2.3.0",
   "private": true,
   "description": "MCP server exposing shamela.ws (Islamic digital library) as a set of tools: browse categories/authors, read book pages, and run full-text search.",
   "type": "module",
@@ -11,7 +11,7 @@
     "resolve:canonical": "node scripts/resolve-canonical-editions.mjs",
     "build:index": "node scripts/build-hadith-index.mjs",
     "check:coverage": "node scripts/check-coverage.mjs",
-    "verify": "npm test && npm run deploy -- --dry-run"
+    "verify": "npm test && wrangler deploy --dry-run --outdir /tmp/wrangler-dry-run"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
@@ -20,5 +20,8 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^4.5.4"
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

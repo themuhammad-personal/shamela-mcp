@@ -1,10 +1,10 @@
 /**
- * shamela.ws scraping client, extracted from the original `src/worker.mjs`
- * bundle. All functions receive an injected `text()` (see http.mjs) so they
+ * shamela.ws scraping client. All functions receive an injected `text()` (see http.mjs) so they
  * are testable offline with fixture HTML.
  */
 
 import { clean, absolute, links, booksFromHtml, normalizeArabic, titleScore, DEFAULT_BASE } from "./arabic.mjs";
+import { parseBookPage } from "./page.mjs";
 
 export function createClient({ base = DEFAULT_BASE, text, maxCachedDetails = 200 }) {
   /**
@@ -58,7 +58,12 @@ export function createClient({ base = DEFAULT_BASE, text, maxCachedDetails = 200
     const title = clean(/<h1[^>]*class="[^"]*size-20[^"]*"[^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i.exec(html)?.[1] || "");
     const am = /href="[^"]*\/author\/(\d+)"[^>]*>([\s\S]*?)<\/a>/i.exec(html);
     const toc = links(html, "", new RegExp(`/book/${bookId}/\\d+`), base).filter((x) => !x.href.includes("javascript"));
-    const body = clean(/<div style="line-height: 1\.8;">([\s\S]*?)<\/div>/i.exec(html)?.[1] || "");
+    // The "بطاقة الكتاب" block. Legacy markup wraps it in an inline-styled div;
+    // fall back to the text that precedes `div.betaka-index` inside `.nass`
+    // (the layout every third-party scraper relies on).
+    const styled = /<div style="line-height: 1\.8;">([\s\S]*?)<\/div>/i.exec(html)?.[1];
+    const beforeIndex = /<div[^>]*class="[^"]*\bnass\b[^"]*"[^>]*>([\s\S]*?)<div[^>]*class="[^"]*betaka-index/i.exec(html)?.[1];
+    const body = clean((styled || beforeIndex || "").replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n"));
     const field = (name) =>
       new RegExp(
         `${name}[:：]\\s*([^\n]+?)(?=(?:الكتاب|المؤلف|المحقق|الناشر|الطبعة|عدد الصفحات|عدد)[：:]|$)`,
@@ -78,6 +83,11 @@ export function createClient({ base = DEFAULT_BASE, text, maxCachedDetails = 200
         edition: field("الطبعة"),
         muhaqqiq: field("المحقق") || field("تحقيق"),
         page_count: /(?:عدد الصفحات)[:：]\s*([^\s]+)/.exec(body)?.[1] || "",
+        parts: /(?:عدد الأجزاء)[:：]\s*([^\s]+)/.exec(body)?.[1] || "",
+        // "ترقيم الكتاب موافق للمطبوع" — page numbers match the printed edition.
+        pagination_matches_print: /ترقيم الكتاب موافق للمطبوع/.test(body),
+        // "وهو ضمن خدمة التخريج" — shamela wires this edition into hadith-number lookup.
+        hadith_numbering_service: /ضمن خدمة التخريج/.test(body),
       },
       url: `${base}/book/${bookId}`,
     };
@@ -86,15 +96,52 @@ export function createClient({ base = DEFAULT_BASE, text, maxCachedDetails = 200
   async function bookPage(bookId, pageNumber) {
     const html = await text(`${base}/book/${bookId}/${pageNumber}`);
     const d = await details(bookId);
-    const m = /<div[^>]*class="[^"]*nass[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<div/i.exec(html);
+    const p = parseBookPage(html, { bookId, pageId: pageNumber });
     return {
-      book_id: bookId,
-      page_number: pageNumber,
-      content: clean(m?.[1] || ""),
+      book_id: String(bookId),
+      page_number: String(pageNumber),
+      content: p.content,
+      paragraphs: p.paragraphs,
+      footnotes: p.footnotes,
+      volume: p.volume,
+      printed_page: p.printed_page,
+      chapter: p.chapter,
+      chapter_path: p.chapter_path,
+      hadith_number_hint: p.hadith_number_hint,
+      nav: p.nav,
       book_title: d.title,
       author: d.author,
       url: `${base}/book/${bookId}/${pageNumber}`,
     };
+  }
+
+  /**
+   * shamela's own "رقم الحديث / الرقم المسلسل" lookup:
+   *   GET /ajax/specialnumber2id/<book_id>/<n>  →  page id (plain text), or a
+   *   negative number when the book has no numbering / n is not found.
+   * Verified live for 1681, 1727, 1726, 1435, 829, 1198, 1699, 25794.
+   * NOTE: for n beyond the last hadith shamela returns the LAST page rather
+   * than -1, so callers must confirm the marker is actually on the page.
+   */
+  async function hadithPageId(bookId, hadithNumber) {
+    const raw = await text(`${base}/ajax/specialnumber2id/${bookId}/${hadithNumber}`, {
+      headers: { "X-Requested-With": "XMLHttpRequest", Accept: "text/plain, */*" },
+    });
+    const v = String(raw).trim();
+    if (!/^-?\d+$/.test(v)) throw new Error(`specialnumber2id: unexpected response "${v.slice(0, 40)}"`);
+    const n = Number(v);
+    return n > 0 ? String(n) : null;
+  }
+
+  /** GET /ajax/pagenum2id/<book_id>/<part>/<printed_page> → page id or null. */
+  async function printedPageId(bookId, part, printedPage) {
+    const raw = await text(`${base}/ajax/pagenum2id/${bookId}/${part}/${printedPage}`, {
+      headers: { "X-Requested-With": "XMLHttpRequest", Accept: "text/plain, */*" },
+    });
+    const v = String(raw).trim();
+    if (!/^-?\d+$/.test(v)) throw new Error(`pagenum2id: unexpected response "${v.slice(0, 40)}"`);
+    const n = Number(v);
+    return n > 0 ? String(n) : null;
   }
 
   async function titleSearch(query, page, limit) {
@@ -248,6 +295,8 @@ export function createClient({ base = DEFAULT_BASE, text, maxCachedDetails = 200
     booksByCategory,
     details,
     bookPage,
+    hadithPageId,
+    printedPageId,
     titleSearch,
     searchLibrary,
     authorBooks,

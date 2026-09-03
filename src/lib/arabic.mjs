@@ -1,6 +1,6 @@
 /**
  * Pure Arabic / HTML-scraping helpers, extracted from the original
- * `src/worker.mjs` bundle. No I/O, no globals — fully unit-testable.
+ * legacy worker bundle. No I/O, no globals — fully unit-testable.
  */
 
 export const DEFAULT_BASE = "https://shamela.ws";
@@ -12,6 +12,9 @@ export function clean(s) {
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
     .replace(/&#(?:x([\da-f]+)|(\d+));/gi, (_, h, d) =>
       String.fromCodePoint(parseInt(h || d, h ? 16 : 10)),
     )
