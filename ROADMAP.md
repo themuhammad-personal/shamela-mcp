@@ -10,20 +10,29 @@ Hanafi-priority, four-madhhab comparison).
 | Phase | Status |
 |---|---|
 | 0.1 reconstruct source | ✅ done — `src/index.mjs` + `src/lib/*.mjs` + `src/tools.mjs` |
-| 0.2 test harness | ✅ done — `node --test` with offline fixtures (40 tests) |
-| 0.3 storage decision | ✅ decided (static files → KV later); builder scaffolded |
-| 0.4 rate limiting | ⏳ pending |
+| 0.2 test harness | ✅ done — `node --test` with offline fixtures (60 tests) |
+| 0.3 storage decision | ✅ decided (static files → KV later); builder writes `src/data/*.mjs` |
+| 0.4 rate limiting | 🟡 partial — scripts throttle upstream calls + cache book details; the public endpoint still has no per-caller limit |
 | 0.5 ToS/copyright note | ⏳ pending |
-| 1.1 canonical editions | ✅ done — detector + tests + resolver script (live book_ids pending) |
-| 1.2 coverage gap (P5) | ✅ scripted — `check-coverage.mjs` (needs network to run) |
+| 1.1 canonical editions | ✅ wired end-to-end — detector + `src/data/canonical-book-ids.mjs` + resolver that actually writes it (live book_ids still pending a network run) |
+| 1.2 coverage gap (P5) | ✅ scripted — `npm run check:coverage` writes `reports/coverage.{json,md}` |
 | 1.3 filter docs | ✅ done — `century`/`exclude_words` documented in tool descriptions |
-| 2.1 `get_hadith_by_number` | ✅ scaffolded — tool + resolver + builder (index pending network) |
-| 2.2 reverse page→hadith | ✅ scaffolded — `hadith_numbers` on `get_book_page` |
-| 2.3 inline hadith numbers | ✅ scaffolded — deep-link on `search_library` |
-| 2.4 `get_tafsir_by_ayah` | ✅ scaffolded — tool + resolver + builder (index pending network) |
-| 2.5 deep-link snippets | ✅ scaffolded — `hadith_numbers` attached to search hits |
+| 2.1 `get_hadith_by_number` | ✅ runnable — tool + resolver + builder; index empty until a network run |
+| 2.2 reverse page→hadith | ✅ done — `hadith_numbers` on `get_book_page` |
+| 2.3 inline hadith numbers | ✅ done — deep-link on `search_library` |
+| 2.4 `get_tafsir_by_ayah` | ✅ runnable — tool + resolver + real (conservative) ayah detector |
+| 2.5 deep-link snippets | ✅ done — `hadith_numbers` attached to search hits |
 | 3.x metadata / tarjamah | ⏳ pending |
 | 4.x reading UX | ⏳ pending |
+
+### Where the network-dependent scripts run
+
+`resolve:canonical`, `build:index` and `check:coverage` all need real access to
+`shamela.ws`. They do **not** need your computer: the **`Refresh citation index`**
+GitHub workflow (`.github/workflows/refresh-index.yml`) runs them on a GitHub
+runner, commits the generated `src/data/*.mjs` + `reports/*` back to the repo,
+and redeploys the Worker. Trigger it from *Actions → Refresh citation index →
+Run workflow*, or let the weekly cron do it. Nothing has to be uploaded by hand.
 
 > **Audience & language.** The end-user is a practicing `alim` who will catch a
 > wrong citation. Every feature here is judged against one question: *can the
@@ -102,9 +111,14 @@ globally-standard numbering (e.g. Fuad Abd al-Baqi for Bukhari/Muslim, Ahmad
 Shakir for Tirmidhi/Musnad, Muhyi al-Din Abd al-Hamid for Abu Dawud…). Tag
 results so the model never has to guess among 5 Bukhari editions.
 
-> **Status: started.** See `src/canonical-editions.mjs` (data + detector),
-> `scripts/resolve-canonical-editions.mjs` (populates book_ids from live data),
+> **Status: wired.** See `src/canonical-editions.mjs` (data + detector),
+> `src/data/canonical-book-ids.mjs` (the resolved map the detector reads),
+> `scripts/resolve-canonical-editions.mjs` (writes that map from live data),
 > `test/canonical-editions.test.mjs` (unit tests).
+>
+> The remaining gap is purely "nobody has run the resolver somewhere with
+> network access yet" — the `Refresh citation index` workflow closes it without
+> a local machine.
 
 ---
 

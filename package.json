@@ -8,7 +8,10 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "test": "node --test test/*.test.mjs",
-    "resolve:canonical": "node scripts/resolve-canonical-editions.mjs"
+    "resolve:canonical": "node scripts/resolve-canonical-editions.mjs",
+    "build:index": "node scripts/build-hadith-index.mjs",
+    "check:coverage": "node scripts/check-coverage.mjs",
+    "verify": "npm test && npm run deploy -- --dry-run"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

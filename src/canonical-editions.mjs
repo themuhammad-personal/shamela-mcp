@@ -18,6 +18,8 @@
  *   - We never *invent* grading or numbers; a non-match simply returns false.
  */
 
+import canonicalBookIds from "./data/canonical-book-ids.mjs";
+
 /**
  * Canonical hadith collections and the numbering authority whose edition is
  * the worldwide citation standard.
@@ -185,9 +187,27 @@ export function isCanonicalNumbering(book = {}, { allowTitleOnly = false } = {})
  * the signature detector so `search_books_by_name` (which lacks author info)
  * can answer instantly from a precomputed map instead of per-book fetches.
  *
- * Seed is intentionally empty until live verification.
+ * The data lives in `src/data/canonical-book-ids.mjs`, which the resolver
+ * *writes* (and the `Refresh citation index` CI workflow commits back). Until
+ * that job has run, the map is empty and every lookup falls through to
+ * signature detection — which by design never asserts canonical on a guess.
  */
-export const CANONICAL_BOOK_IDS = new Map();
+export const CANONICAL_BOOK_IDS = new Map(
+  Object.entries(canonicalBookIds?.editions ?? {}).map(([key, rec]) => [
+    String(rec.book_id),
+    { key, ...rec },
+  ]),
+);
+
+/** Provenance of the resolved map — surfaced in tool output so a caller can
+ *  tell "verified against live data on <date>" from "seed, never resolved". */
+export function canonicalMapStatus() {
+  return {
+    resolved_at: canonicalBookIds?.generated_at ?? null,
+    source: canonicalBookIds?.source ?? null,
+    verified_book_ids: CANONICAL_BOOK_IDS.size,
+  };
+}
 
 /**
  * Produce the canonical annotation to attach to a book result.
