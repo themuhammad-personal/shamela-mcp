@@ -15,8 +15,19 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createHttp } from "./lib/http.mjs";
 import { createClient } from "./lib/shamela.mjs";
-import { canonicalFields, canonicalMapStatus } from "./canonical-editions.mjs";
-import { resolveHadith, resolveTafsirAyah, hadithNumbersOnPage, indexStatus } from "./lib/hadith-index.mjs";
+import { canonicalFields, canonicalMapStatus, CANONICAL_EDITIONS, canonicalRecord } from "./canonical-editions.mjs";
+import {
+  resolveHadith,
+  resolveHadithLive,
+  resolveTafsirAyah,
+  resolveTafsirAyahLive,
+  hadithNumbersOnPage,
+  indexStatus,
+} from "./lib/hadith-index.mjs";
+import { detectHadithNumbers, detectAyahs } from "./lib/citation-detect.mjs";
+import { normalizeArabic } from "./lib/arabic.mjs";
+
+export const SERVER_VERSION = "2.3.0";
 
 const response = (x) => ({ content: [{ type: "text", text: JSON.stringify(x, null, 2) }] });
 
@@ -99,8 +110,10 @@ function guarded(tool, handler) {
 }
 
 export function createServer(client = createClient({ text: createHttp().text })) {
-  const s = new McpServer({ name: "shamela-library", version: "2.2.0" });
-  const tool = (name, description, schema, handler) => s.tool(name, description, schema, guarded(name, handler));
+  const s = new McpServer({ name: "shamela-library", version: SERVER_VERSION });
+  // `registerTool` is the non-deprecated API in SDK ≥1.30 (`tool()` is @deprecated).
+  const tool = (name, description, schema, handler) =>
+    s.registerTool(name, { description, inputSchema: schema }, guarded(name, handler));
 
   tool("get_categories", "Shamela-র সম্পূর্ণ category তালিকা (id, নাম, বই সংখ্যা)।", {}, async () =>
     response({ items: await client.categories() }),
@@ -112,7 +125,7 @@ export function createServer(client = createClient({ text: createHttp().text }))
 
   tool(
     "get_book_details",
-    "বইয়ের title, author, metadata ও সূচিপত্র (TOC)। metadata-তে muhaqqiq (মুহাক্কিক) এবং canonical-edition তথ্যও থাকে — দেখুন is_canonical_numbering।",
+    "বইয়ের title, author, metadata (muhaqqiq, publisher, parts, pagination_matches_print, hadith_numbering_service) ও সূচিপত্র (TOC)। is_canonical_numbering শুধুমাত্র হাতে-যাচাই করা book_id whitelist থেকে আসে; canonical_edition.confidence = verified | other_edition | title — other_edition হলে canonical_book_id-তে standard সংস্করণ দেওয়া থাকে।",
     { book_id: idParam },
     async (x) => {
       const d = await client.details(x.book_id);
@@ -122,17 +135,25 @@ export function createServer(client = createClient({ text: createHttp().text }))
 
   tool(
     "get_book_page",
-    "বইয়ের নির্দিষ্ট Shamela page/node-এর আরবি টেক্সট। hadith_numbers ফিল্ডে এই পৃষ্ঠায় থাকা হাদিস নম্বরগুলোও থাকে (reverse lookup), যদি সূচি তৈরি থাকে।",
+    "বইয়ের নির্দিষ্ট Shamela page/node-এর আরবি টেক্সট — paragraphs, footnotes (hamesh) আলাদা, volume/printed_page, chapter_path, prev/next nav সহ। hadith_numbers = এই পৃষ্ঠার অনুচ্ছেদ-শুরুতে ছাপা হাদিস নম্বর (footnote বাদ); ayah_refs = পৃষ্ঠায় স্পষ্টভাবে উল্লিখিত [সূরা: আয়াত] রেফারেন্স।",
     { book_id: idParam, page_number: z.coerce.string().regex(/^\d+$/) },
     async (x) => {
       const p = await client.bookPage(x.book_id, x.page_number);
-      return response({ ...p, hadith_numbers: hadithNumbersOnPage(x.book_id, x.page_number) });
+      const onPage = detectHadithNumbers(p.paragraphs);
+      const indexed = hadithNumbersOnPage(x.book_id, x.page_number);
+      return response({
+        ...p,
+        hadith_numbers: onPage.length ? onPage : indexed,
+        hadith_numbers_source: onPage.length ? "page_markers" : indexed.length ? "static_index" : "none",
+        ayah_refs: detectAyahs(p.paragraphs),
+        ...canonicalFields({ book_id: x.book_id, title: p.book_title }),
+      });
     },
   );
 
   tool(
     "search_books_by_name",
-    "Arabic-normalized, ranked বই-শিরোনাম সার্চ (book_id + pagination)। প্রতিটি ফলাফলে is_canonical_numbering ও canonical_edition থাকে। দ্রষ্টব্য: shamela.ws-এর আরবি corpus-এ কিছু উপমহাদেশীয় হানাফি/উর্দু-উৎস রচনা (যেমন معارف القرآن, بيان القرآن) নাও থাকতে পারে — ফলাফল না থাকা মানে রচনাটি 'অস্তিত্বহীন' নয়।",
+    "Arabic-normalized, ranked বই-শিরোনাম সার্চ (book_id + pagination)। প্রতিটি ফলাফলে is_canonical_numbering (whitelist-ভিত্তিক) ও canonical_edition থাকে; একই গ্রন্থের non-canonical সংস্করণে canonical_book_id দেওয়া থাকে। দ্রষ্টব্য: shamela.ws-এর আরবি corpus-এ কিছু উপমহাদেশীয় হানাফি/উর্দু-উৎস রচনা (যেমন معارف القرآن, بيان القرآن) নাও থাকতে পারে — ফলাফল না থাকা মানে রচনাটি 'অস্তিত্বহীন' নয়।",
     { query: z.string().min(2).max(200), page: z.number().int().min(1).default(1), limit: z.number().int().min(1).max(30).default(10) },
     async (x) => {
       const r = await client.titleSearch(x.query, x.page, x.limit);
@@ -177,46 +198,90 @@ export function createServer(client = createClient({ text: createHttp().text }))
   // --- Priority 1: hadith-number-addressable retrieval ---
   tool(
     "get_hadith_by_number",
-    "একটি canonical হাদিস নম্বরকে বইয়ের page/node-এ রূপান্তর করে matn (ও isnad, থাকলে) ফেরত দেয় — পৃষ্ঠা অনুমান না করে। ভিত্তি: scripts/build-hadith-index.mjs-এ তৈরি সূচি। সূচি না থাকলে found:false + reason ফেরত, কখনো নম্বর বানানো হয় না।",
+    "হাদিস নম্বর → matn/isnad, পৃষ্ঠা অনুমান ছাড়া। ধাপ: (1) static সূচি; (2) না থাকলে Shamela-র নিজস্ব 'رقم الحديث' lookup (/ajax/specialnumber2id) → পৃষ্ঠা আনা → অনুচ্ছেদ-শুরুতে «N -» marker আছে কিনা যাচাই। marker না মিললে found:false + কারণ, কখনো অনুমান নয়। canonical সংস্করণের book_id-র জন্য list_canonical_editions দেখুন (যেমন বুখারী 1681, মুসলিম 1727)। সতর্কতা: মুয়াত্তা (1699)-তে নম্বর প্রতি কিতাবে নতুন করে শুরু হয়।",
     { book_id: idParam, hadith_number: intId },
     async (x) => {
-      const res = resolveHadith(x.book_id, x.hadith_number);
-      if (!res.found)
+      const canon = canonicalFields({ book_id: x.book_id });
+      const cached = resolveHadith(x.book_id, x.hadith_number);
+      if (cached.found) {
+        const live = await resolveHadithLive(client, x.book_id, x.hadith_number).catch(() => null);
+        if (live?.found) return response(formatHadith(live, canon));
+        // fall back to the indexed page even if live verification was unavailable
+        const page = await client.bookPage(cached.book_id, cached.page);
+        return response({ ...formatHadith({ ...cached, text: page.content, page_data: page, spans_pages: [cached.page] }, canon), verified_on_page: false });
+      }
+      const live = await resolveHadithLive(client, x.book_id, x.hadith_number);
+      if (!live.found) {
+        const { page_data, ...rest } = live;
         return response({
-          ...res,
+          ...rest,
           book_id: x.book_id,
+          ...canon,
           index_status: indexStatus(),
           canonical_map: canonicalMapStatus(),
-          hint: "সূচি তৈরি হয়নি — 'Refresh citation index' workflow (অথবা নেটওয়ার্কসহ scripts/build-hadith-index.mjs) চালান।",
+          ...(page_data
+            ? { page_preview: { page: page_data.page_number, chapter_path: page_data.chapter_path, first_paragraph: page_data.paragraphs?.[0]?.slice(0, 200) } }
+            : {}),
+          hint:
+            canon.canonical_edition?.confidence === "other_edition"
+              ? `এই book_id canonical সংস্করণ নয়; standard নম্বরের জন্য book_id ${canon.canonical_edition.canonical_book_id} ব্যবহার করুন।`
+              : "এই বইয়ে Shamela-র হাদিস-নম্বর lookup নেই, অথবা নম্বরটি এই সংস্করণে নেই। list_canonical_editions দিয়ে সঠিক সংস্করণ বেছে নিন।",
         });
-      const page = await client.bookPage(res.book_id, res.page);
-      return response({
-        found: true,
-        book_id: res.book_id,
-        hadith_number: res.hadith_number,
-        page: res.page,
-        book_title: page.book_title,
-        author: page.author,
-        matn: page.content,
-        isnad_present: /حدثنا|أخبرنا|أنبأنا/.test(page.content),
-        citation: { book_id: res.book_id, hadith_number: res.hadith_number, page: res.page, note: res.note },
-      });
+      }
+      return response(formatHadith(live, canon));
     },
   );
+
+  function formatHadith(r, canon) {
+    const pd = r.page_data ?? {};
+    return {
+      found: true,
+      book_id: r.book_id,
+      hadith_number: r.hadith_number,
+      page: r.page,
+      spans_pages: r.spans_pages,
+      book_title: pd.book_title,
+      author: pd.author,
+      volume: pd.volume,
+      printed_page: pd.printed_page,
+      chapter_path: pd.chapter_path,
+      matn: r.text,
+      // Real pages are fully vocalised («حَدَّثَنَا»), so strip harakat first.
+      isnad_present: /حدثنا|اخبرنا|انبانا|حدثني|اخبرني|سمعت/.test(normalizeArabic(r.text ?? "")),
+      routes_on_page: r.routes_on_page,
+      other_numbers_on_page: r.numbers_on_page,
+      footnotes: pd.footnotes?.length ? pd.footnotes : undefined,
+      source: r.source,
+      verified_on_page: r.source !== "static_index",
+      ...canon,
+      citation: {
+        book_id: r.book_id,
+        edition: canonicalRecord(r.book_id)?.title ?? pd.book_title,
+        numbering: canonicalRecord(r.book_id)?.numbering ?? null,
+        hadith_number: r.hadith_number,
+        volume: pd.volume,
+        printed_page: pd.printed_page,
+        page: r.page,
+        url: pd.url,
+      },
+    };
+  }
 
   // --- Priority 2: ayah-addressable tafsir retrieval ---
   tool(
     "get_tafsir_by_ayah",
-    "একটি Shamela তাফসির বই (Ibn Kathir, Qurtubi, Tabari ইত্যাদি) ও ayah রেফারেন্স (surah, ayah) দিলে সেই আয়াহ-সংক্রান্ত আলোচনার প্যাসেজ ফেরত দেয় — সূচিপত্র হেঁটে পৃষ্ঠা অনুমান ছাড়াই। ভিত্তি: scripts/build-hadith-index.mjs-এ তৈরি সূচি।",
+    "তাফসির বই (book_id) + (surah, ayah) → সেই আয়াতের আলোচনার পৃষ্ঠা। ধাপ: static সূচি → না থাকলে TOC-এ «تفسير سورة X» থেকে শুরু করে পৃষ্ঠা হেঁটে ﴿…(n)…﴾ marker মিলিয়ে থামা (সীমাবদ্ধ, অনুমান নয়)। ইবনে কাসীর canonical = 8473।",
     { book_id: idParam, surah: z.number().int().min(1).max(114), ayah: z.number().int().min(1) },
     async (x) => {
-      const res = resolveTafsirAyah(x.book_id, x.surah, x.ayah);
+      let res = resolveTafsirAyah(x.book_id, x.surah, x.ayah);
+      if (!res.found) res = await resolveTafsirAyahLive(client, x.book_id, x.surah, x.ayah);
       if (!res.found)
         return response({
           ...res,
           book_id: x.book_id,
           index_status: indexStatus(),
-          hint: "তাফসির সূচি তৈরি হয়নি — 'Refresh citation index' workflow (অথবা নেটওয়ার্কসহ scripts/build-hadith-index.mjs) চালান।",
+          ...canonicalFields({ book_id: x.book_id }),
+          hint: "সূরা TOC-তে নেই বা সীমার মধ্যে আয়াত পাওয়া যায়নি। get_book_details দিয়ে TOC দেখে get_book_page ব্যবহার করুন।",
         });
       const page = await client.bookPage(res.book_id, res.page);
       return response({
@@ -225,10 +290,39 @@ export function createServer(client = createClient({ text: createHttp().text }))
         surah: res.surah,
         ayah: res.ayah,
         page: res.page,
+        source: res.source,
+        ayahs_marked_on_page: res.ayahs_marked_on_page,
         book_title: page.book_title,
+        volume: page.volume,
+        printed_page: page.printed_page,
+        chapter_path: page.chapter_path,
         passage: page.content,
-        citation: { book_id: res.book_id, surah: res.surah, ayah: res.ayah, page: res.page, note: res.note },
+        footnotes: page.footnotes?.length ? page.footnotes : undefined,
+        nav: page.nav,
+        ...canonicalFields({ book_id: res.book_id }),
+        citation: { book_id: res.book_id, surah: res.surah, ayah: res.ayah, volume: page.volume, printed_page: page.printed_page, page: res.page, url: page.url },
       });
+    },
+  );
+
+  // --- canonical edition directory ---
+  tool(
+    "list_canonical_editions",
+    "যাচাইকৃত canonical সংস্করণের তালিকা: প্রতিটি হাদিসগ্রন্থ/তাফসিরের কোন Shamela book_id standard নম্বর বহন করে (বুখারী 1681, মুসলিম 1727, আবু দাউদ 1726, তিরমিযী 1435, নাসাঈ 829, ইবনে মাজাহ 1198, মুয়াত্তা 1699, মুসনাদ আহমাদ 25794, ইবনে কাসীর 8473), নম্বরের উৎস, শেষ নম্বর, এবং একই গ্রন্থের non-canonical সংস্করণসমূহ।",
+    {},
+    async () => response({ ...canonicalMapStatus(), editions: CANONICAL_EDITIONS }),
+  );
+
+  // --- printed volume/page → shamela page id ---
+  tool(
+    "get_page_by_printed_number",
+    "ছাপা সংস্করণের (জুয/খণ্ড, পৃষ্ঠা) → Shamela page। Shamela-র /ajax/pagenum2id ব্যবহার করে; 'ترقيم الكتاب موافق للمطبوع' বইতে নির্ভরযোগ্য। না মিললে found:false।",
+    { book_id: idParam, volume: z.coerce.string().regex(/^\d+$/), printed_page: z.coerce.string().regex(/^\d+$/) },
+    async (x) => {
+      const page = await client.printedPageId(x.book_id, x.volume, x.printed_page);
+      if (!page) return response({ found: false, reason: "printed_page_not_found", ...x });
+      const p = await client.bookPage(x.book_id, page);
+      return response({ found: true, ...p, hadith_numbers: detectHadithNumbers(p.paragraphs) });
     },
   );
 

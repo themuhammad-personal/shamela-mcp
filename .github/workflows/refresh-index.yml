@@ -1,0 +1,97 @@
+name: Refresh citation index
+
+# Builds/refreshes the static hadith/tafsir index and the coverage report from
+# live shamela.ws, then opens a PR with the result. Manual + monthly.
+#
+# The Worker does NOT depend on this: get_hadith_by_number falls back to
+# shamela's live /ajax/specialnumber2id lookup when the static index is empty.
+# The index only makes lookups cheaper (one page fetch instead of two requests).
+#
+# Be polite to shamela.ws: default delay 400 ms, one book per run by default.
+
+on:
+  workflow_dispatch:
+    inputs:
+      book:
+        description: "Hadith book_id to index (blank = Bukhari 1681)"
+        default: "1681"
+        required: false
+      from:
+        description: "First hadith number"
+        default: "1"
+        required: false
+      to:
+        description: "Last hadith number (blank = edition's last_number)"
+        default: ""
+        required: false
+      step:
+        description: "Sample every Nth number (1 = full)"
+        default: "1"
+        required: false
+      tafsir:
+        description: "Tafsir book_id to index (blank = skip)"
+        default: ""
+        required: false
+  schedule:
+    - cron: "17 3 1 * *" # monthly
+
+concurrency:
+  group: refresh-index
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+
+      - name: Verify canonical whitelist against live shamela.ws
+        run: node scripts/resolve-canonical-editions.mjs
+
+      - name: Coverage report (subcontinental works)
+        run: node scripts/check-coverage.mjs
+
+      - name: Build hadith index
+        if: ${{ github.event_name == 'schedule' || inputs.book != '' }}
+        env:
+          BOOK: ${{ inputs.book || '1681' }}
+          FROM: ${{ inputs.from || '1' }}
+          TO: ${{ inputs.to }}
+          STEP: ${{ inputs.step || '1' }}
+        run: |
+          set -x
+          ARGS="--book $BOOK --from=$FROM --step=$STEP --delay=400"
+          if [ -n "$TO" ]; then ARGS="$ARGS --to=$TO"; fi
+          node scripts/build-hadith-index.mjs $ARGS
+
+      - name: Build tafsir index
+        if: ${{ inputs.tafsir != '' }}
+        run: node scripts/build-hadith-index.mjs --tafsir "${{ inputs.tafsir }}" --delay=400
+
+      - name: Unit tests still pass with the new data
+        run: npm test
+
+      - name: Open pull request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: bot/refresh-index
+          title: "chore: refresh citation index & coverage report"
+          commit-message: "chore: refresh citation index & coverage report"
+          body: |
+            Automated by `.github/workflows/refresh-index.yml`.
+            - `src/data/hadith-index.mjs` (merged, never truncated)
+            - `reports/coverage.*`
+            Review the run log for "unverified" counts before merging.
+          add-paths: |
+            src/data/hadith-index.mjs
+            reports/

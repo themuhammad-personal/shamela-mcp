@@ -5,16 +5,34 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # wrangler >= 4.90 requires Node 22+. Keep in sync with package.json "engines".
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-      - run: npm install
+          node-version: 22
+          cache: npm
+
+      - name: Install (lockfile)
+        run: npm ci --no-audit --no-fund
+
+      - name: Unit tests (offline)
+        run: npm test
+
+      - name: Dry-run build
+        run: npx wrangler deploy --dry-run --outdir /tmp/wrangler-dry-run
+
       - name: Deploy
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # Use the wrangler already installed by `npm ci` (version pinned by lockfile).
+          packageManager: npm
