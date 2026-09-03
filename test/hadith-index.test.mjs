@@ -20,6 +20,20 @@ test("indexStatus reports seed state", () => {
   assert.equal(indexStatus(fixture).books_indexed, 2);
 });
 
+test("indexStatus is a summary — it must never dump the raw index", () => {
+  // This object is attached to EVERY `found: false` answer. Once the index is
+  // actually built it can be hundreds of KB; leaking it would bury the one
+  // thing the caller needs (why the lookup missed) in payload.
+  const s = indexStatus(fixture);
+  assert.equal(s.books, undefined, "raw books object is not exposed");
+  assert.deepEqual(s.indexed_book_ids, ["111", "222"]);
+  assert.equal(s.hadith_books, 1);
+  assert.equal(s.tafsir_books, 1);
+  assert.equal(s.hadith_entries, 2);
+  assert.equal(s.ayah_entries, 1);
+  assert.ok(JSON.stringify(s).length < 400, `summary stayed small: ${JSON.stringify(s).length} bytes`);
+});
+
 test("resolveHadith returns page for known number", () => {
   const r = resolveHadith("111", "8", fixture);
   assert.equal(r.found, true);

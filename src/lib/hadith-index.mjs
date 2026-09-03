@@ -12,10 +12,32 @@
 import index from "../data/hadith-index.mjs";
 
 export function indexStatus(idx = index) {
+  const books = idx.books ?? {};
+  const ids = Object.keys(books);
+  let hadith_books = 0;
+  let tafsir_books = 0;
+  let hadith_entries = 0;
+  let ayah_entries = 0;
+  for (const b of Object.values(books)) {
+    if (b?.type === "hadith") {
+      hadith_books += 1;
+      hadith_entries += Object.keys(b.index ?? {}).length;
+    } else if (b?.type === "tafsir") {
+      tafsir_books += 1;
+      ayah_entries += Object.keys(b.ayahs ?? {}).length;
+    }
+  }
+  // Deliberately a *summary*: the raw index can be hundreds of KB, and this
+  // object is attached to every `found: false` answer. Dumping it would bury
+  // the one thing the caller needs (why the lookup missed).
   return {
     generated_at: idx.generated_at ?? null,
-    books_indexed: Object.keys(idx.books ?? {}).length,
-    books: idx.books ?? {},
+    books_indexed: ids.length,
+    indexed_book_ids: ids,
+    hadith_books,
+    tafsir_books,
+    hadith_entries,
+    ayah_entries,
   };
 }
 

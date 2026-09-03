@@ -6,7 +6,16 @@
 
 import { clean, absolute, links, booksFromHtml, normalizeArabic, titleScore, DEFAULT_BASE } from "./arabic.mjs";
 
-export function createClient({ base = DEFAULT_BASE, text }) {
+export function createClient({ base = DEFAULT_BASE, text, maxCachedDetails = 200 }) {
+  /**
+   * `bookPage()` needs the book's title/author, which live on the *details*
+   * page. Without this cache every single page read costs two upstream
+   * requests — and the index builder reads hundreds of pages, so that doubling
+   * is exactly the kind of load we must not put on shamela.ws (Roadmap 0.4).
+   * Bounded Map, per isolate; titles/metadata don't change under us.
+   */
+  const detailsCache = new Map();
+
   async function categories() {
     const html = await text(`${base}/`);
     const cats = links(html, "cat_title", /\/category\/(\d+)/, base);
@@ -35,6 +44,16 @@ export function createClient({ base = DEFAULT_BASE, text }) {
   }
 
   async function details(bookId) {
+    const cached = detailsCache.get(String(bookId));
+    if (cached) return cached;
+    const result = await fetchDetails(bookId);
+    if (detailsCache.size >= maxCachedDetails) detailsCache.delete(detailsCache.keys().next().value);
+    detailsCache.set(String(bookId), result);
+    return result;
+  }
+
+  /** Uncached details fetch — used by the cache miss path above. */
+  async function fetchDetails(bookId) {
     const html = await text(`${base}/book/${bookId}`);
     const title = clean(/<h1[^>]*class="[^"]*size-20[^"]*"[^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i.exec(html)?.[1] || "");
     const am = /href="[^"]*\/author\/(\d+)"[^>]*>([\s\S]*?)<\/a>/i.exec(html);

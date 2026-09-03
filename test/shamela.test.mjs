@@ -64,6 +64,26 @@ test("bookPage returns content + title/author", async () => {
   assert.equal(p.page_number, "1");
 });
 
+test("bookPage reuses cached details — one details fetch per book, not per page", async () => {
+  // bookPage() needs title/author from the details page. Uncached, every page
+  // read costs two upstream requests; the index builder reads hundreds of
+  // pages, so that doubling is real load on shamela.ws (Roadmap 0.4).
+  let detailCalls = 0;
+  const text = async (url) => {
+    if (url === "https://shamela.ws/book/123") {
+      detailCalls += 1;
+      return BOOK_DETAILS;
+    }
+    if (url.startsWith("https://shamela.ws/book/123/")) return PAGE;
+    throw new Error(`no fixture for ${url}`);
+  };
+  const c = createClient({ text });
+  await c.bookPage("123", "1");
+  await c.bookPage("123", "2");
+  await c.bookPage("123", "3");
+  assert.equal(detailCalls, 1, "details fetched once for three page reads");
+});
+
 test("titleSearch parses JSON and ranks", async () => {
   const c = createClient({
     text: fakeText({
