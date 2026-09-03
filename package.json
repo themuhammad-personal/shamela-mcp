@@ -1,0 +1,15 @@
+{
+  "name": "shamela-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MCP server exposing shamela.ws (Islamic digital library) as a set of tools: browse categories/authors, read book pages, and run full-text search.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  },
+  "license": "MIT"
+}
