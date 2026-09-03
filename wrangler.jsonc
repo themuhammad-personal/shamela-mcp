@@ -2,7 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "shamela-mcp",
   "account_id": "f857cdb663bf03e3ff64e81e33af2b24",
-  "main": "src/worker.mjs",
+  "main": "src/index.mjs",
   "compatibility_date": "2024-09-25",
   "compatibility_flags": ["nodejs_compat"],
   "observability": {
