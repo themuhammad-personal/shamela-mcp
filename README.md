@@ -56,4 +56,4 @@ curl -X PUT \
 MIT — see [LICENSE](LICENSE).
 
 ---
-_Last verified auto-deploy: 2026-09-03 03:05 UTC_
+_Last verified auto-deploy: pending re-test after wrangler v4 fix_
