@@ -10,6 +10,7 @@
     "test": "node --test test/*.test.mjs",
     "resolve:canonical": "node scripts/resolve-canonical-editions.mjs",
     "build:index": "node scripts/build-hadith-index.mjs",
+    "build:tafsir": "node scripts/build-tafsir-index.mjs",
     "check:coverage": "node scripts/check-coverage.mjs",
     "verify": "npm test && wrangler deploy --dry-run --outdir /tmp/wrangler-dry-run"
   },

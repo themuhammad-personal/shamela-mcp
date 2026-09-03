@@ -74,9 +74,9 @@ jobs:
           if [ -n "$TO" ]; then ARGS="$ARGS --to=$TO"; fi
           node scripts/build-hadith-index.mjs $ARGS
 
-      - name: Build tafsir index
+      - name: Build tafsir index (surah ranges + ayah → page; ~30 min for 8473)
         if: ${{ inputs.tafsir != '' }}
-        run: node scripts/build-hadith-index.mjs --tafsir "${{ inputs.tafsir }}" --delay=400
+        run: node scripts/build-tafsir-index.mjs --tafsir "${{ inputs.tafsir }}" --delay=400
 
       - name: Unit tests still pass with the new data
         run: npm test
@@ -90,8 +90,10 @@ jobs:
           body: |
             Automated by `.github/workflows/refresh-index.yml`.
             - `src/data/hadith-index.mjs` (merged, never truncated)
+            - `src/data/tafsir-index.mjs` (surah ranges + ayah → page; merged)
             - `reports/coverage.*`
             Review the run log for "unverified" counts before merging.
           add-paths: |
             src/data/hadith-index.mjs
+            src/data/tafsir-index.mjs
             reports/

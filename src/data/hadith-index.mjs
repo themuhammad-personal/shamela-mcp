@@ -9,14 +9,13 @@
  * Schema:
  *   books: {
  *     "<book_id>": {
- *       type: "hadith" | "tafsir",
- *       // hadith books:
- *       index:   { "<hadith_number>": { page: "<node_id>", note?: string } },
- *       reverse: { "<node_id>": ["<hadith_number>", ...] },
- *       // tafsir books:
- *       ayahs:   { "<surah>:<ayah>": { page: "<node_id>", note?: string } }
+ *       type: "hadith",
+ *       index:   { "<hadith_number>": { page: "<node_id>", verified: boolean, note?: string } },
+ *       reverse: { "<node_id>": ["<hadith_number>", ...] }
  *     }
  *   }
+ *
+ * Tafsir books live in `src/data/tafsir-index.mjs` (scripts/build-tafsir-index.mjs).
  */
 export default {
   generated_at: null,

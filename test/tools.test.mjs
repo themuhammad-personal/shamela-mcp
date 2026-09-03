@@ -135,30 +135,79 @@ test("get_hadith_by_number: book without numbering service → found:false with 
   assert.match(other.hint, /1681/);
 });
 
-test("get_tafsir_by_ayah degrades gracefully when surah is not in the TOC", async () => {
-  const d = await json("get_tafsir_by_ayah", { book_id: "123", surah: 2, ayah: 255 });
+test("get_tafsir_by_ayah: book without a persisted tafsir index → found:false, no page walk", async () => {
+  let fetched = 0;
+  const srv = createServer(mockClient({ bookPage: async () => { fetched += 1; throw new Error("must not fetch"); } }));
+  const d = JSON.parse((await srv._registeredTools.get_tafsir_by_ayah.handler({ book_id: "123", surah: 2, ayah: 255 })).content[0].text);
   assert.equal(d.found, false);
-  assert.equal(d.reason, "surah_not_in_toc");
+  assert.equal(d.reason, "no_tafsir_index_for_book");
+  assert.equal(fetched, 0);
+  assert.match(d.hint, /build-tafsir-index/);
+  assert.equal(d.index_status.books, undefined);
 });
 
-test("get_tafsir_by_ayah: live TOC walk stops on the page whose ﴿…(n)…﴾ marker matches", async () => {
-  const pages = {
-    "8473/198": { paragraphs: ["تفسير سورة البقرة", "﴿الم (١)﴾ قد اختلف المفسرون"], nav: { next: "199" } },
-    "8473/199": { paragraphs: ["﴿ذَلِكَ الْكِتَابُ لا رَيْبَ فِيهِ هُدًى لِلْمُتَّقِينَ (٢)﴾"], nav: { next: "200" } },
-    "8473/200": { paragraphs: ["﴿الَّذِينَ يُؤْمِنُونَ بِالْغَيْبِ (٣) وَالَّذِينَ يُؤْمِنُونَ بِمَا أُنْزِلَ إِلَيْكَ (٤)﴾ [البقرة: ٣، ٤]"], nav: { next: "201" } },
-  };
+test("get_tafsir_by_ayah: indexed ayah is answered from the persisted index with ONE page fetch", async () => {
+  const fetched = [];
   const srv = createServer(
     mockClient({
-      details: async () => ({ book_id: "8473", title: "تفسير ابن كثير - ت السلامة", toc: [{ title: "فاتحة الكتاب", href: "https://shamela.ws/book/8473/151" }, { title: "تفسير سورة البقرة", href: "https://shamela.ws/book/8473/198" }, { title: "تفسير سورة آل عمران", href: "https://shamela.ws/book/8473/788" }] }),
-      bookPage: async (id, p) => ({ book_id: id, page_number: String(p), content: pages[`${id}/${p}`].paragraphs.join("\n"), footnotes: [], chapter_path: [], ...pages[`${id}/${p}`], url: `u/${p}` }),
+      bookPage: async (id, p) => {
+        fetched.push(`${id}/${p}`);
+        return { book_id: id, page_number: String(p), paragraphs: ["﴿اللَّهُ لا إِلَهَ إِلا هُوَ الْحَيُّ الْقَيُّومُ … (٢٥٥)﴾"], content: "…", footnotes: [], chapter_path: [], nav: { prev: "720", next: "722" }, volume: "1", printed_page: "678", url: `u/${p}` };
+      },
     }),
   );
-  const d = JSON.parse((await srv._registeredTools.get_tafsir_by_ayah.handler({ book_id: "8473", surah: 2, ayah: 4 })).content[0].text);
+  const d = JSON.parse((await srv._registeredTools.get_tafsir_by_ayah.handler({ book_id: "8473", surah: 2, ayah: 255 })).content[0].text);
   assert.equal(d.found, true);
-  assert.equal(d.page, "200");
-  assert.equal(d.source, "live_toc_walk");
-  assert.deepEqual(d.ayahs_marked_on_page, [3, 4]);
+  assert.equal(d.page, "721", "verified live: Baqarah 255 block starts on 8473/721");
+  assert.equal(d.precision, "exact");
+  assert.equal(d.source, "static_index");
+  assert.deepEqual(fetched, ["8473/721"]);
   assert.equal(d.is_canonical_numbering, true);
+});
+
+test("get_tafsir_by_ayah: unindexed ayah → bounded bisection INSIDE the surah range (≤ 20 fetches, precision labelled)", async () => {
+  // Real ranges from the shipped index: al-Ankabut = 3168..3201, with 29:1-4 → 3168 and 29:5-9 → 3169 seeded.
+  const fetched = [];
+  const srv = createServer(
+    mockClient({
+      bookPage: async (id, p) => {
+        fetched.push(Number(p));
+        const n = Number(p);
+        // ayah blocks of 3 every 2 pages from 3170 (ayahs 10..)
+        const block = n >= 3170 && (n - 3170) % 2 === 0 ? [10 + ((n - 3170) / 2) * 3, 11 + ((n - 3170) / 2) * 3, 12 + ((n - 3170) / 2) * 3] : null;
+        return { book_id: id, page_number: String(p), paragraphs: block ? [`﴿${block.map((a) => `… (${a})`).join(" ")}﴾`] : ["شرح (١)"], content: "…", footnotes: [], chapter_path: [], nav: { prev: String(n - 1), next: String(n + 1) }, volume: "6", printed_page: "1", url: `u/${p}` };
+      },
+    }),
+  );
+  const d = JSON.parse((await srv._registeredTools.get_tafsir_by_ayah.handler({ book_id: "8473", surah: 29, ayah: 20 })).content[0].text);
+  assert.equal(d.found, true);
+  assert.equal(d.precision, "exact");
+  assert.equal(d.source, "bounded_search");
+  assert.equal(d.page, "3176"); // ayahs 19,20,21
+  assert.deepEqual(d.ayahs_marked_on_page, [19, 20, 21]);
+  assert.deepEqual(d.surah_range, { start: "3168", end: "3201" });
+  const probes = fetched.slice(0, -1); // last fetch is the final page read for the passage
+  assert.ok(probes.length <= 20, `probes ${probes.length}`);
+  assert.ok(probes.every((p) => p >= 3169 && p <= 3201), `probes stayed inside the surah: ${probes}`);
+});
+
+test("get_tafsir_by_ayah: al-Fatiha (no ﴿…﴾ blocks in Ibn Kathir) → surah start page with an honest precision flag", async () => {
+  const fetched = [];
+  const srv = createServer(
+    mockClient({
+      bookPage: async (id, p) => {
+        fetched.push(Number(p));
+        return { book_id: id, page_number: String(p), paragraphs: ["(إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ) قرأ السبعة (١)"], content: "…", footnotes: ["(١) في جـ"], chapter_path: [], nav: {}, volume: "1", printed_page: "134", url: `u/${p}` };
+      },
+    }),
+  );
+  const d = JSON.parse((await srv._registeredTools.get_tafsir_by_ayah.handler({ book_id: "8473", surah: 1, ayah: 5 })).content[0].text);
+  assert.equal(d.found, true);
+  assert.equal(d.page, "151");
+  assert.equal(d.precision, "surah_start");
+  assert.ok(d.note);
+  assert.ok(fetched.every((p) => p >= 151 && p <= 197), `fetched ${fetched}`);
+  assert.ok(fetched.length <= 21);
 });
 
 test("list_canonical_editions returns the whitelist with provenance", async () => {
@@ -176,10 +225,81 @@ test("get_page_by_printed_number resolves via pagenum2id", async () => {
   assert.equal(miss.found, false);
 });
 
-test("search_library attaches hadith_numbers deep-link field only when known", async () => {
+test("search_library: hadith_numbers key is ABSENT (not undefined/empty) when the index does not know the page, and the response says why", async () => {
   const d = await json("search_library", { query: "إيمان", match_mode: "any_words", page: 1 });
   assert.ok(Array.isArray(d.results));
-  assert.equal(d.results[0].hadith_numbers, undefined);
+  assert.equal(Object.hasOwn(d.results[0], "hadith_numbers"), false);
+  assert.match(d.hadith_numbers_note, /hadith_numbers/);
+  assert.match(d.hadith_numbers_note, /get_book_page/);
+});
+
+test("search_library description does not promise fields the payload cannot carry", async () => {
+  const desc = s._registeredTools.search_library.description;
+  assert.doesNotMatch(desc, /ayah রেফারেন্সও থাকে/);
+  assert.match(desc, /get_book_page/);
+  assert.match(desc, /hadith_numbers ফিল্ড কেবল তখনই/);
+});
+
+// --- editorial gradings surfaced by get_hadith_by_number -------------------
+
+test("get_hadith_by_number surfaces «[حكم الألباني]» from the page footnotes (Tirmidhi 1435 shape)", async () => {
+  const srv = createServer(
+    mockClient({
+      hadithPageId: async (id, n) => (id === "1435" && String(n) === "1" ? "3" : null),
+      bookPage: async (id, p) => ({
+        book_id: id, page_number: String(p), volume: "1", printed_page: "5", chapter_path: [], nav: {}, url: `u/${p}`,
+        paragraphs: ["١ - حَدَّثَنَا قُتَيْبَةُ بْنُ سَعِيدٍ … هَذَا حَدِيثٌ حَسَنٌ صَحِيحٌ"],
+        content: "…",
+        footnotes: ["[حكم الألباني] : صحيح"],
+      }),
+    }),
+  );
+  const d = JSON.parse((await srv._registeredTools.get_hadith_by_number.handler({ book_id: "1435", hadith_number: 1 })).content[0].text);
+  assert.equal(d.found, true);
+  assert.deepEqual({ grader: d.grading.grader, verdict: d.grading.verdict, verdict_class: d.grading.verdict_class }, { grader: "الألباني", verdict: "صحيح", verdict_class: "sahih" });
+  assert.equal(d.grading.attribution, "only_grading_on_page");
+  assert.equal(d.grading.page, "3");
+  assert.equal(d.gradings_on_page.length, 1);
+});
+
+test("get_hadith_by_number: Ibn Majah shape (label + newline) and Abu Dawud «حسن صحيح»", async () => {
+  const mk = (foot) =>
+    createServer(
+      mockClient({
+        hadithPageId: async () => "4",
+        bookPage: async (id, p) => ({ book_id: id, page_number: String(p), paragraphs: ["١ - حَدَّثَنَا …"], content: "…", footnotes: [foot], chapter_path: [], nav: {}, url: "u" }),
+      }),
+    );
+  const ibnMajah = JSON.parse((await mk("[حكم الألباني]\nصحيح")._registeredTools.get_hadith_by_number.handler({ book_id: "1198", hadith_number: 1 })).content[0].text);
+  assert.equal(ibnMajah.grading.verdict, "صحيح");
+  const abuDawud = JSON.parse((await mk("[حكم الألباني] : حسن صحيح")._registeredTools.get_hadith_by_number.handler({ book_id: "1726", hadith_number: 1 })).content[0].text);
+  assert.equal(abuDawud.grading.verdict, "حسن صحيح");
+  assert.equal(abuDawud.grading.verdict_class, "hasan_sahih");
+});
+
+test("get_hadith_by_number: no grading field is invented for Bukhari/Muslim/Musnad pages", async () => {
+  const d = await json("get_hadith_by_number", { book_id: "1727", hadith_number: 8 });
+  assert.equal(d.found, true);
+  assert.equal(d.grading, null);
+  assert.equal(d.gradings_on_page, undefined);
+  assert.equal(d.grading_note, undefined);
+});
+
+test("get_hadith_by_number: two hadiths + one verdict on a page → grading null, verdicts listed, note explains", async () => {
+  const srv = createServer(
+    mockClient({
+      hadithPageId: async () => "9",
+      bookPage: async (id, p) => ({
+        book_id: id, page_number: String(p), chapter_path: [], nav: {}, url: "u", content: "…",
+        paragraphs: ["٥ - حَدَّثَنَا …", "٦ - حَدَّثَنَا …"],
+        footnotes: ["[حكم الألباني] : ضعيف"],
+      }),
+    }),
+  );
+  const d = JSON.parse((await srv._registeredTools.get_hadith_by_number.handler({ book_id: "1435", hadith_number: 6 })).content[0].text);
+  assert.equal(d.grading, null);
+  assert.deepEqual(d.gradings_on_page.map((g) => g.verdict), ["ضعيف"]);
+  assert.ok(d.grading_note);
 });
 
 // --- structured failures --------------------------------------------------

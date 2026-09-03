@@ -18,7 +18,7 @@
 
 import { createHttp } from "../src/lib/http.mjs";
 import { createClient } from "../src/lib/shamela.mjs";
-import { detectHadithNumbers, surahFromHeading } from "../src/lib/citation-detect.mjs";
+import { detectHadithNumbers, surahsFromHeading } from "../src/lib/citation-detect.mjs";
 import canonicalBookIds from "../src/data/canonical-book-ids.mjs";
 
 const args = process.argv.slice(2);
@@ -79,9 +79,13 @@ for (const [key, rec] of Object.entries(canonicalBookIds.editions)) {
     const p = await client.hadithPageId(id, 1);
     if (p) bad(`tafsir edition unexpectedly has hadith numbering (page ${p})`);
     else ok("no hadith numbering (expected for tafsir)");
-    const surahs = new Set(d.toc.map((t) => surahFromHeading(t.title)).filter(Boolean));
-    if (surahs.size >= 100) ok(`${surahs.size} surah chapters in TOC`);
-    else bad(`only ${surahs.size} surah chapters detected in TOC`);
+    const surahs = new Set(d.toc.flatMap((t) => surahsFromHeading(t.title)));
+    const missing = [];
+    for (let n = 1; n <= 114; n += 1) if (!surahs.has(n)) missing.push(n);
+    // 8473 is known to lack TOC entries for 26 (al-Shu'ara) and 29 (al-Ankabut);
+    // those come from in-text headings via scripts/build-tafsir-index.mjs.
+    if (surahs.size >= 110) ok(`${surahs.size} surah chapters in TOC${missing.length ? ` (no TOC entry for: ${missing.join(", ")})` : ""}`);
+    else bad(`only ${surahs.size} surah chapters detected in TOC — missing ${missing.join(", ")}`);
   }
   await sleep(500);
 }
