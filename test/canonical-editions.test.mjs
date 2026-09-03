@@ -19,7 +19,7 @@ test("normalizeArabic folds common variants", () => {
   assert.equal(normalizeArabic("مُحَمَّد"), "محمد");
 });
 
-test("whitelist: the nine hand-verified canonical ids are present", () => {
+test("whitelist: the eleven hand-verified canonical ids are present", () => {
   const ids = Object.fromEntries(CANONICAL_EDITIONS.map((e) => [e.key, String(e.book_id)]));
   assert.deepEqual(ids, {
     "sahih-al-bukhari": "1681",
@@ -31,8 +31,10 @@ test("whitelist: the nine hand-verified canonical ids are present", () => {
     "muwatta-malik": "1699",
     "musnad-ahmad": "25794",
     "tafsir-ibn-kathir": "8473",
+    "tafsir-al-tabari": "7798",
+    "tafsir-al-qurtubi": "20855",
   });
-  assert.equal(canonicalMapStatus().verified_book_ids, 9);
+  assert.equal(canonicalMapStatus().verified_book_ids, 11);
   assert.ok(canonicalMapStatus().known_other_editions > 15);
 });
 

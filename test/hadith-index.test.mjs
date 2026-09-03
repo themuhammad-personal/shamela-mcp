@@ -33,11 +33,13 @@ test("indexStatus reports seed state", () => {
   assert.equal(indexStatus(fixture, NO_TAFSIR).books_indexed, 2);
 });
 
-test("indexStatus merges the shipped tafsir index (8473 with 114 surah ranges)", () => {
+test("indexStatus merges the shipped tafsir index (8473 + 7798 + 20855, 114 surah ranges each)", () => {
   const s = indexStatus({ generated_at: null, books: {} });
   assert.ok(s.indexed_book_ids.includes("8473"));
-  assert.equal(s.tafsir_books, 1);
-  assert.equal(s.surah_ranges, 114);
+  assert.ok(s.indexed_book_ids.includes("7798"));
+  assert.ok(s.indexed_book_ids.includes("20855"));
+  assert.equal(s.tafsir_books, 3);
+  assert.equal(s.surah_ranges, 3 * 114);
   assert.ok(s.ayah_entries > 0);
   assert.equal(s.books, undefined);
 });
@@ -124,6 +126,38 @@ test("shipped tafsir index: 8473 has a contiguous, monotonic range for every sur
     const r = b.surahs[String(s)];
     assert.ok(Number(page) >= Number(r.start) && Number(page) <= Number(r.end), `${key} → ${page} inside ${r.start}-${r.end}`);
   }
+});
+
+test("shipped tafsir index: Tabari 7798 and Qurtubi 20855 — contiguous ranges, seeds inside their surah (live TOC 2026-09-03)", () => {
+  const checks = {
+    "7798": { first: ["315", "383"], s2: "384", s3: "3287", s114: ["16697", "16700"], seed: ["114:1", "16697"] },
+    "20855": { first: ["114", "157"], s2: "158", s3: "1344", s114: ["7449", "7453"], seed: ["2:80", "482"] },
+  };
+  for (const [id, c] of Object.entries(checks)) {
+    const b = shippedTafsirIndex.books[id];
+    assert.equal(b.type, "tafsir", id);
+    for (let n = 1; n <= 114; n += 1) assert.ok(b.surahs[String(n)], `${id}: surah ${n} missing`);
+    assert.deepEqual([b.surahs["1"].start, b.surahs["1"].end], c.first, `${id} al-Fatiha`);
+    assert.equal(b.surahs["2"].start, c.s2, `${id} al-Baqarah`);
+    assert.equal(b.surahs["3"].start, c.s3, `${id} Al Imran`);
+    assert.deepEqual([b.surahs["114"].start, b.surahs["114"].end], c.s114, `${id} al-Nas`);
+    assert.equal(b.surahs["114"].end, b.last_page);
+    for (let n = 1; n < 114; n += 1) {
+      const cur = b.surahs[String(n)];
+      const next = b.surahs[String(n + 1)];
+      assert.ok(Number(cur.start) <= Number(cur.end), `${id} surah ${n} start<=end`);
+      assert.equal(Number(cur.end) + 1, Number(next.start), `${id} surah ${n} ends right before ${n + 1}`);
+    }
+    assert.equal(b.ayahs[c.seed[0]], c.seed[1], `${id} seed ${c.seed[0]}`);
+    for (const [key, page] of Object.entries(b.ayahs)) {
+      const [s, a] = key.split(":").map(Number);
+      assert.ok(a >= 1 && a <= AYAH_COUNTS[s], `${id} ${key} valid ayah`);
+      const r = b.surahs[String(s)];
+      assert.ok(Number(page) >= Number(r.start) && Number(page) <= Number(r.end), `${id} ${key} → ${page} inside ${r.start}-${r.end}`);
+    }
+  }
+  assert.deepEqual([resolveTafsirAyah("20855", 2, 80).page, resolveTafsirAyah("20855", 2, 80).precision], ["482", "exact"]);
+  assert.deepEqual([resolveTafsirAyah("7798", 3, 26).page, resolveTafsirAyah("7798", 3, 26).source], ["3421", "static_index"]);
 });
 
 test("resolveTafsirAyah answers from the shipped index in O(1) with precision exact", () => {
@@ -247,4 +281,25 @@ test("surahStartsFromToc + surahRangesFromStarts reproduce the 8473 layout", () 
   const ranges = surahRangesFromStarts(starts, "4588");
   assert.deepEqual(ranges["2"], { start: "198", end: "787", heading: "تفسير سورة البقرة", source: "toc" });
   assert.deepEqual([ranges["113"].start, ranges["113"].end, ranges["114"].start, ranges["114"].end], ["4576", "4583", "4584", "4588"]);
+});
+
+test("surahStartsFromToc: Qurtubi 20855 — an ayah heading nested before the surah heading never starts the surah", () => {
+  // Real order in 20855's TOC: the basmala chapter (p.97) carries «[سورة الفاتحة (١): آية ١]»
+  // as a sub-entry, and «تفسير سورة الفاتحة» only comes at p.114.
+  const toc = [
+    { title: "المدخل", href: "https://shamela.ws/book/20855/7" },
+    { title: "الكلام في البسملة وفيها سبع وعشرون مسألة", href: "https://shamela.ws/book/20855/97" },
+    { title: "[سورة الفاتحة (١): آية ١]", href: "https://shamela.ws/book/20855/97" },
+    { title: "تفسير سورة الفاتحة", href: "https://shamela.ws/book/20855/114" },
+    { title: "تفسير سورة البقرة", href: "https://shamela.ws/book/20855/158" },
+    { title: "[سورة البقرة (٢): الآيات ١ إلى ٢]", href: "https://shamela.ws/book/20855/160" },
+    { title: "تفسير سورة و - الذاريات", href: "https://shamela.ws/book/20855/6296" },
+    { title: "تفسير سورة والطور", href: "https://shamela.ws/book/20855/6325" },
+  ];
+  const starts = surahStartsFromToc(toc);
+  assert.equal(starts.get(1).page, "114");
+  assert.equal(starts.get(2).page, "158");
+  assert.equal(starts.get(51).page, "6296");
+  assert.equal(starts.get(52).page, "6325");
+  assert.equal(starts.size, 4);
 });

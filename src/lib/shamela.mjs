@@ -5,6 +5,7 @@
 
 import { clean, absolute, links, booksFromHtml, normalizeArabic, titleScore, DEFAULT_BASE } from "./arabic.mjs";
 import { parseBookPage } from "./page.mjs";
+import { parseAuthorBiography, parseNarratorTarjama } from "./tarjama.mjs";
 
 export function createClient({ base = DEFAULT_BASE, text, maxCachedDetails = 200 }) {
   /**
@@ -256,7 +257,29 @@ export function createClient({ base = DEFAULT_BASE, text, maxCachedDetails = 200
       author: b.author || name,
       author_id: b.author_id || authorId,
     }));
-    return { author_id: authorId, author: name, books, total_available: books.length };
+    // Roadmap 3.3: the author page also carries a «تعريف بالمؤلف» dictionary entry.
+    const biography = parseAuthorBiography(html);
+    return {
+      author_id: authorId,
+      author: name,
+      url: `${base}/author/${authorId}`,
+      books,
+      total_available: books.length,
+      biography: biography.found ? biography : null,
+      biography_status: biography.found ? "found" : biography.reason,
+    };
+  }
+
+  /**
+   * Rijal card for a hadith narrator — the `/narrator/<id>` links that shamela
+   * puts on every isnad name (`ajax/tarjama/<id>` serves the same fragment).
+   */
+  async function narratorTarjama(narratorId) {
+    const url = `${base}/narrator/${narratorId}`;
+    const html = await text(url);
+    const h1 = clean(/<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html)?.[1] || "");
+    const parsed = parseNarratorTarjama(html);
+    return { narrator_id: String(narratorId), url, heading: h1 || null, ...parsed };
   }
 
   async function recent() {
@@ -300,6 +323,7 @@ export function createClient({ base = DEFAULT_BASE, text, maxCachedDetails = 200
     titleSearch,
     searchLibrary,
     authorBooks,
+    narratorTarjama,
     recent,
     allBooks,
   };

@@ -13,21 +13,22 @@ previous agent's claims).
 | Phase | Status |
 |---|---|
 | 0.1 reconstruct source | ✅ done — `src/index.mjs` + `src/lib/*.mjs` + `src/tools.mjs`; legacy 783 KB `src/worker.mjs` deleted |
-| 0.2 test harness | ✅ done — `node --test`, 104 offline tests incl. a **real shamela page fixture** (`test/fixtures/`) |
+| 0.2 test harness | ✅ done — `node --test`, 125 offline tests incl. a **real shamela page fixture** (`test/fixtures/`) |
 | 0.3 storage decision | ✅ static data files (`src/data/*.mjs`) + live fallback; KV not needed yet |
-| 0.4 rate limiting | 🟡 upstream side done (per-isolate concurrency cap 4, 20 s timeout, 15-min cache, in-flight de-dupe, builder delay ≥250 ms). **Public `/mcp` endpoint still has no per-caller limit/auth.** |
-| 0.5 ToS/copyright note | ⏳ pending |
+| 0.4 rate limiting | ✅ upstream side (per-isolate concurrency cap 4, 20 s timeout, 15-min cache, in-flight de-dupe, builder delay ≥250 ms) **+ optional endpoint auth**: set the `MCP_API_KEY` secret and `/mcp` requires `Authorization: Bearer` / `X-API-Key` / `?key=` (401 otherwise, constant-time compare, OPTIONS + `/` stay open). Unset = open, as before (`src/lib/auth.mjs`, README «Protecting the endpoint») |
+| 0.5 ToS/copyright note | ✅ README «Terms, attribution & copyright»: shamela.ws is a free non-profit project (donation links recorded); this client fetches live, never mirrors; only page-number indexes are stored; every response carries edition + printed page + URL for attribution; takedown note |
 | 0.6 CI/CD | ✅ **fixed** — deploy was broken since PR #1 (wrangler 4.128 needs Node ≥22; workflow used Node 20). Now Node 22 + `npm ci` + tests + dry-run before deploy |
-| 1.1 canonical editions | ✅ **hand-verified whitelist** of 9 book_ids (see `src/data/canonical-book-ids.mjs`), each checked against `/ajax/specialnumber2id`. The old محقق-name heuristic was wrong on real data (false negative on Bukhari 1681) and is gone. `list_canonical_editions` tool added |
+| 1.1 canonical editions | ✅ **hand-verified whitelist** of 11 book_ids (see `src/data/canonical-book-ids.mjs`), each checked against `/ajax/specialnumber2id`. The old محقق-name heuristic was wrong on real data (false negative on Bukhari 1681) and is gone. `list_canonical_editions` tool added |
 | 1.2 coverage gap (P5) | 🟡 script exists; `reports/` not yet generated (needs a network run — see workflow) |
 | 1.3 filter docs | ✅ done |
 | 2.1 `get_hadith_by_number` | ✅ **works without any prebuilt index** — uses shamela's own `رقم الحديث` lookup (`/ajax/specialnumber2id`) then verifies the «N -» marker on the fetched page; continues across page breaks; refuses out-of-range numbers; never guesses. **Editorial grading**: explicit `[حكم الألباني] : …` / `قال الألباني: …` in the page apparatus → `grading` (all three printed shapes: Tirmidhi `: صحيح`, Abu Dawud `: حسن صحيح`, Ibn Majah label + newline); attributed only when unambiguous, else `grading: null` + `gradings_on_page`; the compiler's own «حسن صحيح» is never a grading |
 | 2.2 reverse page→hadith | ✅ `hadith_numbers` on `get_book_page` now come from **on-page markers** (footnotes excluded), static index only as fallback |
 | 2.3 inline hadith numbers | 🟡 `search_library` hits carry `hadith_numbers` only when the static hadith index has the page (index still empty). The tool description and a `hadith_numbers_note` in every response now say exactly that; the key is absent otherwise — no phantom field |
-| 2.4 `get_tafsir_by_ayah` | ✅ **persisted index** `src/data/tafsir-index.mjs`: Ibn Kathir 8473 — all **114 surah page ranges** (TOC headings in every shape 8473 uses: `فاتحة الكتاب`, `سورة X`, `"ن"`, `سأل سائل`, `السورة التي يذكر فيها الماعون`, `سورتي المعوذتين` …; al-Shu'ara → 3040 and al-Ankabut → 3168 have **no TOC entry** and are seeded from their in-text headings) + hand-verified ayah → page seeds. Unindexed ayah → bounded search **inside the surah's range only** (≤ 20 page reads), result always labelled `precision: exact / nearest_before / surah_start`. No request-time TOC walk. Full ayah map is filled offline by `scripts/build-tafsir-index.mjs` (workflow input `tafsir`) |
+| 2.4 `get_tafsir_by_ayah` | ✅ **persisted index** `src/data/tafsir-index.mjs` for **three tafsirs**: Ibn Kathir 8473, **al-Tabari 7798** (ت التركي; 114 ranges from the live TOC — heading shapes `القول في تأويل فاتحة الكتاب`, `تفسير السورة التي يذكر فيها X`, `أول تفسير …`, quoted opening words `"قد أفلح المؤمنون"`, `"حم عسق"`, `"عم يتساءلون"` …) and **al-Qurtubi 20855** (دار الكتب المصرية; 114 ranges — `سورة براءة`, `و - الذاريات`, fused `والطور`; ayahs located by its editorial `[سورة X (n): آية m]` headings since it prints no `﴿﴾` blocks; al-Baqara 1–229 already seeded from the TOC). Ibn Kathir 8473 — all **114 surah page ranges** (TOC headings in every shape 8473 uses: `فاتحة الكتاب`, `سورة X`, `"ن"`, `سأل سائل`, `السورة التي يذكر فيها الماعون`, `سورتي المعوذتين` …; al-Shu'ara → 3040 and al-Ankabut → 3168 have **no TOC entry** and are seeded from their in-text headings) + hand-verified ayah → page seeds. Unindexed ayah → bounded search **inside the surah's range only** (≤ 20 page reads), result always labelled `precision: exact / nearest_before / surah_start`. No request-time TOC walk. Full ayah map is filled offline by `scripts/build-tafsir-index.mjs` (workflow input `tafsir`) |
 | 2.5 deep-link snippets | 🟡 same dependency as 2.3 |
 | 2.6 printed page lookup | ✅ new `get_page_by_printed_number` (`/ajax/pagenum2id`) |
-| 3.x metadata / tarjamah | ⏳ pending (`/ajax/tarjama/<narrator_id>` endpoint identified) |
+| 3.3 tarjamah | ✅ `get_narrator_biography` (`/narrator/<id>` rijal card → labelled fields, hijri years, Ibn Hajar / al-Dhahabi ranks verbatim, «الجرح والتعديل» grouped by critic with printed sources; nothing computed) + `get_author_books` now returns the author page's «تعريف بالمؤلف» entry (dates, full name, works, references, source) |
+| 3.1 / 3.2 metadata | ⏳ pending |
 | 4.x reading UX | ⏳ pending |
 
 ### Where the network-dependent scripts run
@@ -174,7 +175,7 @@ results so the model never has to guess among 5 Bukhari editions.
 |---|---|---|
 | 3.1 | **Hadith grading metadata, attributed** (Priority 4) | Only surface grading a *named* muhaqqiq asserted in the source (e.g. `ت الألباني` prints). v1: return footnote/hashiya text; v2: structured. Never algorithmic grading. |
 | 3.2 | Enrich edition metadata | Muhaqqiq, tahqiq type, print/edition, year — beyond the current publisher/edition/page-count. |
-| 3.3 | **Author tarjamah (biography) tool** | Birth/death year, teachers, students, madhhab, reliability. |
+| 3.3 | **Author tarjamah (biography) tool** | ✅ Birth/death year, madhhab/creed, tabaqa, and **reliability as quoted** from the named critics (Ibn Hajar, al-Dhahabi, Ibn Ma'in, Abu Hatim …) with the printed source of each statement — `get_narrator_biography`; author-level entry via `get_author_books.biography`. Teachers/students are not printed on shamela's card and are therefore not returned. |
 
 ---
 
