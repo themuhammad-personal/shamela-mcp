@@ -56,4 +56,4 @@ curl -X PUT \
 MIT — see [LICENSE](LICENSE).
 
 ---
-_Last verified auto-deploy: pending re-test after wrangler v4 fix_
+_Last verified auto-deploy: retest after removing Cloudflare token IP restriction_
