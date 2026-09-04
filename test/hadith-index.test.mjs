@@ -70,6 +70,13 @@ test("resolveHadith: unknown number → found:false, never fabricated", () => {
   assert.equal(r.reason, "hadith_number_not_indexed");
 });
 
+test("resolveHadith rejects unverified or malformed static entries", () => {
+  const idx = { books: { "111": { type: "hadith", index: { "1": { page: "10", verified: false }, "2": { page: "not-a-page", verified: true } } } } };
+  assert.equal(resolveHadith("111", "1", idx).reason, "hadith_number_not_verified");
+  assert.equal(resolveHadith("111", "2", idx).reason, "hadith_index_entry_invalid");
+  assert.equal(resolveHadith("111", "0", idx).reason, "invalid_hadith_number");
+});
+
 test("resolveHadith: unindexed book → found:false", () => {
   const r = resolveHadith("999", "1", fixture);
   assert.equal(r.found, false);

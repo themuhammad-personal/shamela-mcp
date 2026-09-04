@@ -24,7 +24,7 @@ import {
   hadithNumbersOnPage,
   indexStatus,
 } from "./lib/hadith-index.mjs";
-import { detectHadithNumbers, extractHadith, detectAyahs, gradingAcrossPages } from "./lib/citation-detect.mjs";
+import { detectHadithNumbers, extractHadith, detectAyahs, detectQuranBracketAyahs, gradingAcrossPages } from "./lib/citation-detect.mjs";
 import { normalizeArabic } from "./lib/arabic.mjs";
 
 export const SERVER_VERSION = "2.4.0";
@@ -38,8 +38,9 @@ const response = (x) => ({ content: [{ type: "text", text: JSON.stringify(x, nul
 const sharedHttp = createHttp();
 const sharedClient = createClient({ text: sharedHttp.text });
 
-const idParam = z.string().regex(/^\d+$/);
-const intId = z.coerce.string().regex(/^\d+$/);
+const idParam = z.string().regex(/^[1-9]\d{0,11}$/);
+const intId = z.coerce.string().regex(/^[1-9]\d{0,11}$/);
+const pageParam = z.coerce.string().regex(/^[1-9]\d{0,11}$/);
 
 /**
  * Turn a thrown error into something a caller can act on.
@@ -165,7 +166,7 @@ export function createServer(client = sharedClient) {
     return knownHadithEdition || pageIdentifiesHadith ? detectHadithNumbers(page.paragraphs) : [];
   };
 
-  tool("get_categories",  "Shamela-র সম্পূর্ণ category তালিকা (id, নাম, বই সংখ্যা)।", {}, async () =>
+  tool("get_categories", "Shamela-র সম্পূর্ণ category তালিকা (id, নাম, বই সংখ্যা)।", {}, async () =>
     response({ items: await client.categories() }),
   );
 
@@ -186,7 +187,7 @@ export function createServer(client = sharedClient) {
   tool(
     "get_book_page",
     "বইয়ের নির্দিষ্ট Shamela page/node-এর আরবি টেক্সট — paragraphs, footnotes (hamesh) আলাদা, volume/printed_page, chapter_path, prev/next nav সহ। hadith_numbers = এই পৃষ্ঠার অনুচ্ছেদ-শুরুতে ছাপা হাদিস নম্বর (footnote বাদ); ayah_refs = পৃষ্ঠায় স্পষ্টভাবে উল্লিখিত [সূরা: আয়াত] রেফারেন্স।",
-    { book_id: idParam, page_number: z.coerce.string().regex(/^\d+$/) },
+    { book_id: idParam, page_number: pageParam },
     async (x) => {
       const p = await client.bookPage(x.book_id, x.page_number);
       const onPage = hadithNumbersWithEvidence(x.book_id, p);
@@ -218,7 +219,7 @@ export function createServer(client = sharedClient) {
       query: z.string().min(1).max(250),
       match_mode: z.enum(["any_words", "all_words", "exact_phrase"]).default("any_words"),
       exclude_words: z.array(z.string().min(1).max(80)).max(10).optional(),
-      categories: z.array(z.string().regex(/^\d+$/)).max(10).optional(),
+      categories: z.array(z.string().regex(/^[1-9]\d{0,11}$/)).max(10).optional(),
       century: z.array(z.string().regex(/^-?\d+$/)).max(10).optional(),
       page: z.number().int().min(1).max(500).default(1),
     },
@@ -314,6 +315,7 @@ export function createServer(client = sharedClient) {
               spans_pages: [cached.page],
               numbers_on_page: pageNumbers,
               routes_on_page: hit.routes_on_page,
+              verified_on_page: true,
               continuation_complete: complete,
               ...(complete ? {} : { continuation_note: "static index fallback returned the verified page only; the hadith continues beyond the bounded fallback page." }),
             },
@@ -409,6 +411,24 @@ export function createServer(client = sharedClient) {
               : "get_book_details দিয়ে TOC দেখে get_book_page ব্যবহার করুন।",
         });
       const page = await client.bookPage(res.book_id, res.page);
+      const markedAyahs = detectQuranBracketAyahs(page.paragraphs ?? [], res.surah);
+      // The persisted map is a location hint, not proof. Re-check exact answers
+      // against the page currently served so a stale map cannot fabricate a
+      // citation after Shamela changes an edition or page id.
+      if (res.precision === "exact" && !markedAyahs.includes(Number(res.ayah))) {
+        return response({
+          found: false,
+          reason: "static_index_marker_not_on_page",
+          book_id: res.book_id,
+          surah: res.surah,
+          ayah: res.ayah,
+          page: res.page,
+          source: res.source,
+          index_status: indexStatus(),
+          ...canonicalFields({ book_id: res.book_id }),
+          note: "তাফসির সূচি এই পৃষ্ঠাটি দেখালেও বর্তমান পৃষ্ঠায় চাওয়া আয়াতের marker নেই; stale index বা edition পরিবর্তন হতে পারে। কোনো passage অনুমান করা হয়নি।",
+        });
+      }
       return response({
         found: true,
         book_id: res.book_id,
@@ -417,10 +437,11 @@ export function createServer(client = sharedClient) {
         page: res.page,
         precision: res.precision,
         source: res.source,
+        verified_on_page: res.precision === "exact" && markedAyahs.includes(Number(res.ayah)),
         note: res.note,
         surah_range: res.surah_range,
         pages_fetched: res.pages_fetched,
-        ayahs_marked_on_page: res.ayahs_marked_on_page,
+        ayahs_marked_on_page: res.ayahs_marked_on_page ?? markedAyahs,
         book_title: page.book_title,
         volume: page.volume,
         printed_page: page.printed_page,
@@ -446,7 +467,7 @@ export function createServer(client = sharedClient) {
   tool(
     "get_page_by_printed_number",
     "ছাপা সংস্করণের (জুয/খণ্ড, পৃষ্ঠা) → Shamela page। Shamela-র /ajax/pagenum2id ব্যবহার করে; 'ترقيم الكتاب موافق للمطبوع' বইতে নির্ভরযোগ্য। না মিললে found:false।",
-    { book_id: idParam, volume: z.coerce.string().regex(/^\d+$/), printed_page: z.coerce.string().regex(/^\d+$/) },
+    { book_id: idParam, volume: pageParam, printed_page: pageParam },
     async (x) => {
       const page = await client.printedPageId(x.book_id, x.volume, x.printed_page);
       if (!page) return response({ found: false, reason: "printed_page_not_found", ...x });

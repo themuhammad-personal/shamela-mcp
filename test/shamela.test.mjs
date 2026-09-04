@@ -143,8 +143,8 @@ test("details cache de-duplicates concurrent misses", async () => {
   assert.equal(detailCalls, 1);
 });
 
-test("details rejects an HTTP-200 body that is not a book page", async () => {
-  const c = createClient({ text: fakeText({ "https://shamela.ws/book/123": "<html><body>Access denied</body></html>" }) });
+test("details rejects HTTP-200 access pages even when they contain a generic h1", async () => {
+  const c = createClient({ text: fakeText({ "https://shamela.ws/book/123": "<html><body><h1>Access denied</h1></body></html>" }) });
   await assert.rejects(() => c.details("123"), /unusable book details/);
 });
 

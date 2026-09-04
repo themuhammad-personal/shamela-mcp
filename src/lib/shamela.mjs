@@ -80,7 +80,7 @@ export function createClient({ base = DEFAULT_BASE, text, maxCachedDetails = 200
   async function fetchDetails(bookId) {
     const html = String(await text(`${base}/book/${bookId}`) ?? "");
     const title = clean(/<h1[^>]*class="[^"]*size-20[^"]*"[^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i.exec(html)?.[1] || "");
-    const hasBookShell = title || /<h1\b|<div\b[^>]*class=["'][^"']*\bnass\b|betaka-index|line-height\s*:\s*1\.8|\/author\/\d+/i.test(html);
+    const hasBookShell = title || /<h1\b[^>]*class=["'][^"']*\bsize-20\b|<div\b[^>]*class=["'][^"']*\bnass\b|betaka-index|line-height\s*:\s*1\.8|\/author\/\d+/i.test(html);
     if (!hasBookShell) throw unusable(`unusable book details for book ${bookId}`);
     const am = /href="[^"]*\/author\/(\d+)"[^>]*>([\s\S]*?)<\/a>/i.exec(html);
     const toc = links(html, "", new RegExp(`/book/${bookId}/\\d+`), base).filter((x) => !x.href.includes("javascript"));

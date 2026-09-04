@@ -62,18 +62,27 @@ export function indexStatus(idx = index, tIdx = tafsirIndex) {
 }
 
 /** Static-index lookup only (synchronous). */
+const POSITIVE_INT_RE = /^[1-9]\d*$/;
+const isPositiveSafeInt = (value) => POSITIVE_INT_RE.test(String(value ?? "")) && Number.isSafeInteger(Number(value));
+
 export function resolveHadith(bookId, hadithNumber, idx = index) {
   const book = idx.books?.[String(bookId)];
-  const num = String(hadithNumber);
+  const num = String(hadithNumber ?? "");
   if (!book || book.type !== "hadith") {
     return { found: false, reason: "no_hadith_index_for_book", hadith_number: num };
+  }
+  if (!isPositiveSafeInt(num)) return { found: false, reason: "invalid_hadith_number", hadith_number: num };
+  const rec = canonicalRecord(bookId);
+  if (rec?.last_number && Number(num) > rec.last_number) {
+    return { found: false, reason: "out_of_range", hadith_number: num, last_number: rec.last_number };
   }
   const entry = book.index?.[num];
   if (!entry) return { found: false, reason: "hadith_number_not_indexed", hadith_number: num };
   if (typeof entry !== "object" || entry.verified !== true) {
     return { found: false, reason: "hadith_number_not_verified", hadith_number: num };
   }
-  return { found: true, book_id: String(bookId), hadith_number: num, page: entry.page, note: entry.note, source: "static_index" };
+  if (!isPositiveSafeInt(entry.page)) return { found: false, reason: "hadith_index_entry_invalid", hadith_number: num };
+  return { found: true, book_id: String(bookId), hadith_number: num, page: String(entry.page), note: entry.note, source: "static_index" };
 }
 
 /** Reverse lookup from the static index; only explicitly verified entries count. */
@@ -89,7 +98,8 @@ const pageOf = (entry) => (entry && typeof entry === "object" ? entry.page : ent
 export function tafsirSurahRange(bookId, surah, tIdx = tafsirIndex) {
   const book = tIdx.books?.[String(bookId)];
   const r = book?.type === "tafsir" ? book.surahs?.[String(surah)] : null;
-  return r ? { start: String(r.start), end: String(r.end), heading: r.heading, source: r.source } : null;
+  if (!r || !isPositiveSafeInt(r.start) || !isPositiveSafeInt(r.end) || Number(r.start) > Number(r.end)) return null;
+  return { start: String(r.start), end: String(r.end), heading: r.heading, source: r.source };
 }
 
 /**
@@ -103,9 +113,14 @@ export function resolveTafsirAyah(bookId, surah, ayah, idx = tafsirIndex) {
   if (!book || book.type !== "tafsir") {
     return { found: false, reason: "no_tafsir_index_for_book", key };
   }
+  if (!Number.isSafeInteger(Number(surah)) || Number(surah) < 1 || Number(surah) > 114 || !isPositiveSafeInt(ayah)) {
+    return { found: false, reason: "invalid_ayah_reference", key };
+  }
   const entry = book.ayahs?.[key];
   if (!entry) return { found: false, reason: "ayah_not_indexed", key, surah_range: tafsirSurahRange(bookId, surah, idx) ?? undefined };
-  return { found: true, book_id: String(bookId), surah, ayah, page: String(pageOf(entry)), precision: "exact", note: entry.note, source: "static_index" };
+  const page = pageOf(entry);
+  if (!isPositiveSafeInt(page)) return { found: false, reason: "tafsir_index_entry_invalid", key };
+  return { found: true, book_id: String(bookId), surah, ayah, page: String(page), precision: "exact", note: entry.note, source: "static_index" };
 }
 
 /**
@@ -116,7 +131,8 @@ export function resolveTafsirAyah(bookId, surah, ayah, idx = tafsirIndex) {
  *   found:false → { reason: "book_has_no_hadith_numbering" | "hadith_number_not_found" | "marker_not_on_page" | "out_of_range" }
  */
 export async function resolveHadithLive(client, bookId, hadithNumber, { maxContinuationPages = 2 } = {}) {
-  const num = String(hadithNumber);
+  const num = String(hadithNumber ?? "");
+  if (!isPositiveSafeInt(num)) return { found: false, reason: "invalid_hadith_number", hadith_number: num };
   const rec = canonicalRecord(bookId);
   const parsedContinuationLimit = Number(maxContinuationPages);
   const continuationLimit = Number.isFinite(parsedContinuationLimit) ? Math.max(0, Math.floor(parsedContinuationLimit)) : 2;
@@ -223,6 +239,9 @@ export async function resolveHadithLive(client, bookId, hadithNumber, { maxConti
  */
 export async function resolveTafsirAyahBounded(client, bookId, surah, ayah, { maxFetches = 20, index: tIdx = tafsirIndex } = {}) {
   const id = String(bookId);
+  if (!Number.isSafeInteger(Number(surah)) || Number(surah) < 1 || Number(surah) > 114 || !isPositiveSafeInt(ayah)) {
+    return { found: false, reason: "invalid_ayah_reference", book_id: id, surah, ayah };
+  }
   const book = tIdx.books?.[id];
   if (!book || book.type !== "tafsir") return { found: false, reason: "no_tafsir_index_for_book", book_id: id, surah, ayah };
   const total = AYAH_COUNTS[surah] ?? 0;

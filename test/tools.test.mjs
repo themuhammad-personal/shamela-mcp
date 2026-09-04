@@ -181,8 +181,25 @@ test("get_tafsir_by_ayah: indexed ayah is answered from the persisted index with
   assert.equal(d.page, "721", "verified live: Baqarah 255 block starts on 8473/721");
   assert.equal(d.precision, "exact");
   assert.equal(d.source, "static_index");
+  assert.equal(d.verified_on_page, true);
   assert.deepEqual(fetched, ["8473/721"]);
   assert.equal(d.is_canonical_numbering, true);
+});
+
+test("get_tafsir_by_ayah refuses a stale static page when its ayah marker is absent", async () => {
+  const fetched = [];
+  const srv = createServer(
+    mockClient({
+      bookPage: async (id, p) => {
+        fetched.push(`${id}/${p}`);
+        return { book_id: id, page_number: String(p), paragraphs: ["شرح عام بلا رقم آية"], content: "…", footnotes: [], chapter_path: [], nav: {}, volume: "1", printed_page: "678", url: `u/${p}` };
+      },
+    }),
+  );
+  const d = JSON.parse((await srv._registeredTools.get_tafsir_by_ayah.handler({ book_id: "8473", surah: 2, ayah: 255 })).content[0].text);
+  assert.equal(d.found, false);
+  assert.equal(d.reason, "static_index_marker_not_on_page");
+  assert.deepEqual(fetched, ["8473/721"]);
 });
 
 test("get_tafsir_by_ayah: unindexed ayah → bounded bisection INSIDE the surah range (≤ 20 fetches, precision labelled)", async () => {
