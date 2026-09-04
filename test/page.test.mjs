@@ -56,7 +56,7 @@ test("hadith page markup (synthetic, same DOM): specialNum input + Muslim-style 
       <a href="https://shamela.ws/book/1727/61"><span class="text-black">(١) باب بيان الإيمان</span></a>
     </div>
     <div class="nass margin-top-10">
-      <p><span id="p1" class="anchor"></span>١ - (٨) أَبُو خَيْثَمَةَ زُهَيْرُ بْنُ حَرْبٍ<a href="#p1" class="btn_tag btn btn-sm"><span class="text-gray fa fa-copy"></span></a></p>
+      <p><span id="p1" class="anchor"></span>١ - (٨) <a href="/narrator/123">أَبُو خَيْثَمَةَ</a> زُهَيْرُ بْنُ حَرْبٍ<a href="#p1" class="btn_tag btn btn-sm"><span class="text-gray fa fa-copy"></span></a></p>
       <p><span id="p2" class="anchor"></span>⦗٣٧⦘<a href="#p2" class="btn_tag btn btn-sm"></a></p>
       <p><span id="p3" class="anchor"></span>٤ - (٨) وحدثني حجاج بن الشاعر<a href="#p3" class="btn_tag btn btn-sm"></a></p>
       <hr />
@@ -73,6 +73,7 @@ test("hadith page markup (synthetic, same DOM): specialNum input + Muslim-style 
   assert.deepEqual(p.nav, { prev: "61", next: "63", last: "7495" });
   assert.deepEqual(p.chapter_path.map((c) => c.title), ["١ - كتاب الإيمان", "(١) باب بيان الإيمان"]);
   assert.deepEqual(detectHadithNumbers(p.paragraphs), ["8"]);
+  assert.deepEqual(p.narrator_links, [{ narrator_id: "123", name: "أَبُو خَيْثَمَةَ", url: "https://shamela.ws/narrator/123", paragraph: 0 }]);
   assert.equal(p.footnotes.length, 1);
 });
 

@@ -35,7 +35,12 @@ test("authorize: secret configured → key required and must match", () => {
   assert.deepEqual(authorize(req(MCP), env), { ok: false, reason: "missing_key" });
   assert.deepEqual(authorize(req(MCP, { headers: { Authorization: "Bearer nope" } }), env), { ok: false, reason: "bad_key" });
   assert.deepEqual(authorize(req(MCP, { headers: { Authorization: "Bearer s3cret" } }), env), { ok: true, mode: "key" });
-  assert.deepEqual(authorize(req(`${MCP}?key=s3cret`), env), { ok: true, mode: "key" });
+  assert.deepEqual(authorize(req(`${MCP}?key=s3cret`), env), {
+    ok: true,
+    mode: "key",
+    credential_source: "query",
+    deprecated: true,
+  });
 });
 
 test("worker: CORS preflight is always open and advertises Authorization", async () => {
@@ -64,6 +69,11 @@ test("worker: locked endpoint → 401 JSON without a key, MCP proceeds with the 
   assert.equal(ok.headers.get("Access-Control-Allow-Origin"), "*", "real responses carry the CORS headers the preflight promised");
   const init = await ok.json();
   assert.equal(init.result.serverInfo.name, "shamela-library");
+
+  const legacy = await worker.fetch(post({}, `${MCP}?key=s3cret`), env);
+  assert.equal(legacy.status, 200);
+  assert.equal(legacy.headers.get("Deprecation"), "true");
+  assert.match(legacy.headers.get("Warning"), /Query-string API keys are deprecated/);
 });
 
 test("worker: no secret → endpoint open (unchanged behaviour) and root page says so", async () => {

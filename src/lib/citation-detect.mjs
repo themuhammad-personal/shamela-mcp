@@ -451,24 +451,40 @@ export function surahHeadingInParagraph(paragraph) {
 }
 
 const NUM = `${DIGITS}{1,3}`;
-/** «سورة البقرة: ٢٥٥», «سورة المائدة الآية ٣», «سورة البقرة ١٠-١٢» */
-const PROSE_RE = new RegExp(`سورة\\s+([^\\d٠-٩۰-۹\\n\\[\\]]{1,40}?)\\s*[:：(]?\\s*(${NUM})(?:\\s*[-–—]\\s*(${NUM}))?`, "g");
+/** Explicit syntax only: «سورة البقرة: ٢٥٥» or «سورة المائدة الآية ٣». */
+const PROSE_RE = new RegExp(
+  `سورة\\s+([^\\d٠-٩۰-۹\\n\\[\\]:：]{1,40}?)\\s*(?::|：|الآية|الاية|آية|اية)\\s*(${NUM})(?:\\s*[-–—]\\s*(${NUM}))?`,
+  "g",
+);
 /** «[البقرة: ٢٥٥]», «[الأعلى: ٦، ٧]», «[آل عمران: ١٣٠ - ١٣٢]» */
 const BRACKET_RE = new RegExp(`\\[\\s*([^\\d٠-٩۰-۹\\[\\]:：]{1,30}?)\\s*[:：]\\s*(${NUM}(?:\\s*(?:[-–—]|،|,)\\s*${NUM})*)\\s*\\]`, "g");
 
-function addRange(found, surah, from, to) {
+const MAX_REFERENCE_EXPANSION = 50;
+
+function addRange(found, metadata, surah, from, to, source, raw) {
   const count = AYAH_COUNTS[surah] ?? 0;
-  if (!from || !to || to < from || to > count) return; // drop, never clamp
-  for (let a = from; a <= to && a - from < 50; a += 1) found.add(`${surah}:${a}`);
+  if (!from || !to || to < from || to > count) return;
+  const total = to - from + 1;
+  const included = Math.min(total, MAX_REFERENCE_EXPANSION);
+  for (let a = from; a < from + included; a += 1) found.add(`${surah}:${a}`);
+  metadata.push({
+    source,
+    surah,
+    from,
+    to,
+    raw,
+    truncated: total > included,
+    included_count: included,
+    omitted_count: Math.max(0, total - included),
+    ...(total > included ? { note: `Range expansion is bounded to ${MAX_REFERENCE_EXPANSION}; inspect the explicit from/to bounds.` } : {}),
+  });
 }
 
-/**
- * Ayah references a page *explicitly* states.
- * @returns {string[]} `"surah:ayah"` keys, de-duplicated, first-seen order.
- */
-export function detectAyahs(content) {
+/** Structured evidence for every explicit ayah reference on a page. */
+export function detectAyahReferences(content) {
   const text = Array.isArray(content) ? content.join("\n") : String(content ?? "");
   const found = new Set();
+  const metadata = [];
 
   PROSE_RE.lastIndex = 0;
   let m;
@@ -477,7 +493,7 @@ export function detectAyahs(content) {
     if (!surah) continue;
     const from = Number(toLatinDigits(m[2]));
     const to = m[3] ? Number(toLatinDigits(m[3])) : from;
-    addRange(found, surah, from, to);
+    addRange(found, metadata, surah, from, to, "prose", m[0]);
   }
 
   BRACKET_RE.lastIndex = 0;
@@ -487,10 +503,15 @@ export function detectAyahs(content) {
     const parts = toLatinDigits(m[2]).split(/\s*(?:،|,)\s*/);
     for (const part of parts) {
       const [a, b] = part.split(/\s*[-–—]\s*/).map((x) => Number(x));
-      addRange(found, surah, a, b ?? a);
+      addRange(found, metadata, surah, a, b ?? a, "bracket", m[0]);
     }
   }
-  return [...found];
+  return { refs: [...found], metadata, truncated: metadata.some((entry) => entry.truncated) };
+}
+
+/** Backwards-compatible flat ayah keys. */
+export function detectAyahs(content) {
+  return detectAyahReferences(content).refs;
 }
 
 /**

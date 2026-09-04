@@ -108,7 +108,13 @@ export function detectCanonicalEdition(book = {}) {
   const id = book.book_id != null ? String(book.book_id) : "";
   if (id && CANONICAL_BOOK_IDS.has(id)) {
     const rec = CANONICAL_BOOK_IDS.get(id);
-    return { key: rec.key, authorityRoman: rec.numbering_roman, note: rec.note, confidence: "verified" };
+    return {
+      key: rec.key,
+      authorityRoman: rec.numbering_roman,
+      note: rec.note,
+      confidence: "verified",
+      ...(rec.perKitabNumbering === true ? { perKitabNumbering: true } : {}),
+    };
   }
   if (id && OTHER_EDITION_IDS.has(id)) {
     const o = OTHER_EDITION_IDS.get(id);

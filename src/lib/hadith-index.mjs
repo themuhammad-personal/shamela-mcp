@@ -159,15 +159,18 @@ export async function resolveHadithLive(client, bookId, hadithNumber, { maxConti
 
   // Continue onto following pages while the hadith runs past the page break.
   const chunks = [pageData];
+  const slices = [{ page: pageData, start: hit.starts_at_paragraph, end: hit.starts_at_paragraph + hit.paragraphs.length }];
   let text = hit.text;
   let cursor = pageData;
+  let continuationIssue = null;
   let continuationComplete = !hit.ends_at_page_end || !cursor.nav?.next;
   for (let i = 0; i < continuationLimit && !continuationComplete; i += 1) {
     let nextPage;
     try {
       nextPage = await client.bookPage(bookId, cursor.nav.next);
     } catch {
-      break; // continuation is best-effort; what we have is already verified
+      continuationIssue = "next_page_fetch_failed";
+      break; // first-page text remains verified, but completeness is explicitly false
     }
     const nextMarkers = detectHadithMarkers(nextPage.paragraphs);
     // Paragraphs up to the first marker of a *different* number belong to us
@@ -180,6 +183,7 @@ export async function resolveHadithLive(client, bookId, hadithNumber, { maxConti
     }
     text += "\n" + nextPage.paragraphs.slice(0, cut).join("\n");
     chunks.push(nextPage);
+    slices.push({ page: nextPage, start: 0, end: cut });
     if (other || !nextPage.nav?.next) continuationComplete = true;
     cursor = nextPage;
   }
@@ -196,8 +200,16 @@ export async function resolveHadithLive(client, bookId, hadithNumber, { maxConti
     continuation_complete: continuationComplete,
     ...(continuationComplete
       ? {}
-      : { continuation_note: `মতনটি ${continuationLimit} পৃষ্ঠার continuation limit-এ থেমেছে; পরের পৃষ্ঠা নিজে get_book_page দিয়ে যাচাই করুন।` }),
+      : {
+          continuation_issue: continuationIssue ?? "continuation_limit_reached",
+          continuation_note: continuationIssue === "next_page_fetch_failed"
+            ? "পরবর্তী পৃষ্ঠা আনা যায়নি; ফেরত দেওয়া মতন অসম্পূর্ণ এবং সম্পূর্ণ হাদিস হিসেবে উদ্ধৃত করা যাবে না।"
+            : `মতনটি ${continuationLimit} পৃষ্ঠার continuation limit-এ থেমেছে; পরের পৃষ্ঠা নিজে get_book_page দিয়ে যাচাই করুন।`,
+        }),
     numbers_on_page: [...new Set(markers.map((m) => m.number))],
+    narrator_links: slices.flatMap(({ page: chunk, start, end }) =>
+      (chunk.narrator_links ?? []).filter((link) => link.paragraph >= start && link.paragraph < end),
+    ),
     // Per-page apparatus, so the caller can attribute editorial gradings
     // («[حكم الألباني] : …» lives in the footnotes of the page where they print it).
     pages: chunks.map((c) => ({
@@ -392,7 +404,7 @@ export async function resolveTafsirAyahBounded(client, bookId, surah, ayah, { ma
   if (lo.marks) {
     const window = Math.max(0, hi.page - 1 - lo.page);
     return done(lo.page, lo.marks, "nearest_before", {
-      note: `আয়াত ${surah}:${ayah}-এর ব্লক ${budget} পৃষ্ঠা পড়ার সীমার মধ্যে পাওয়া যায়নি; এটি সর্বশেষ পৃষ্ঠা যেখানে এর আগের আয়াত (${lo.ayah}) চিহ্নিত — আলোচনা এর পরে, সর্বোচ্চ ${window} পৃষ্ঠার মধ্যে (nav.next)।`,
+      note: `আয়াত ${surah}:${ayah}-এর ব্লক ${budget} পৃষ্ঠা পড়ার সীমার মধ্যে পাওয়া যায়নি; এটি সর্বশেষ পৃষ্ঠা যেখানে এর আগের আয়াত (${lo.ayah}) চিহ্নিত — আলোচনা এর পরে, সর্বোচ্চ ${window} পৃষ্ঠার মধ্যে (nav.next)��`,
       distance_hint: window,
     });
   }

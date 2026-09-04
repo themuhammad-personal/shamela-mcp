@@ -119,6 +119,7 @@ export default {
       title: "موطأ مالك - رواية يحيى - ت عبد الباقي",
       numbering: "ترقيم محمد فؤاد عبد الباقي (متسلسل داخل كل كتاب)",
       numbering_roman: "Muhammad Fuad Abd al-Baqi",
+      perKitabNumbering: true,
       note: "CAUTION: in this print numbers restart inside every كتاب; shamela's specialnumber2id returns the LAST kitab's match for small numbers (1 → كتاب أسماء النبي). Always cite Muwatta as (كتاب, رقم) and verify the page's chapter path.",
       other_editions: [
         { book_id: "28107", title: "موطأ مالك - رواية يحيى - ت الأعظمي", note: "continuous numbering by al-A'zami (differs)." },

@@ -32,6 +32,14 @@ on:
         description: "Tafsir book_id to index (blank = skip)"
         default: ""
         required: false
+      tafsir_from:
+        description: "First tafsir page in this bounded slice"
+        default: "1"
+        required: false
+      tafsir_to:
+        description: "Last tafsir page in this bounded slice"
+        default: "1000"
+        required: false
   schedule:
     - cron: "17 3 1 * *" # monthly
 
@@ -55,6 +63,9 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
 
+      - name: Live citation and markup canaries
+        run: npm run test:live
+
       - name: Verify canonical whitelist against live shamela.ws
         run: node scripts/resolve-canonical-editions.mjs
 
@@ -70,15 +81,27 @@ jobs:
           STEP: ${{ inputs.step || '1' }}
         run: |
           set -euo pipefail
-          args=(--book "$BOOK" "--from=$FROM" "--step=$STEP" --delay=400)
+          args=(--book "$BOOK" "--from=$FROM" "--step=$STEP" --delay=400 --max-lookups=10000 --timeout=20000 --checkpoint=.hadith-index.checkpoint.json --resume)
           if [ -n "$TO" ]; then args+=("--to=$TO"); fi
           node scripts/build-hadith-index.mjs "${args[@]}"
 
-      - name: Build tafsir index (surah ranges + ayah → page; ~30 min for 8473)
+      - name: Build bounded tafsir index slice
         if: ${{ inputs.tafsir != '' }}
         env:
           TAFSIR: ${{ inputs.tafsir }}
-        run: node scripts/build-tafsir-index.mjs --tafsir "$TAFSIR" --delay=400
+          TAFSIR_FROM: ${{ inputs.tafsir_from || '1' }}
+          TAFSIR_TO: ${{ inputs.tafsir_to || '1000' }}
+        run: node scripts/build-tafsir-index.mjs --tafsir "$TAFSIR" --from="$TAFSIR_FROM" --to="$TAFSIR_TO" --max-pages=1000 --timeout=20000 --checkpoint=.tafsir-index.checkpoint.json --resume --delay=400
+
+      - name: Preserve resumable checkpoints
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: citation-index-checkpoints
+          if-no-files-found: ignore
+          path: |
+            .hadith-index.checkpoint.json
+            .tafsir-index.checkpoint.json
 
       - name: Health gate after generated data changes
         run: npm run verify

@@ -77,6 +77,26 @@ function paraText(html) {
 /** Footnote text keeps <br> line breaks so «(١) …<br/>(٢) …» stays separable. */
 const footnoteText = paraText;
 
+/** Narrator identities must be captured before `clean()` removes their anchors. */
+function narratorLinks(paras) {
+  const seen = new Set();
+  const out = [];
+  let paragraph = -1;
+  paras.forEach((para) => {
+    if (/\bhamesh\b/.test(para.cls)) return;
+    paragraph += 1;
+    const re = /<a\b[^>]*href=["'](?:https?:\/\/shamela\.ws)?\/narrator\/(\d+)\/?[^"']*["'][^>]*>([\s\S]*?)<\/a\s*>/gi;
+    let match;
+    while ((match = re.exec(para.html))) {
+      const narrator_id = match[1];
+      if (seen.has(narrator_id)) continue;
+      seen.add(narrator_id);
+      out.push({ narrator_id, name: decode(match[2]), url: `https://shamela.ws/narrator/${narrator_id}`, paragraph });
+    }
+  });
+  return out;
+}
+
 export function parseBookPage(html, { bookId = null, pageId = null } = {}) {
   const src = String(html ?? "");
 
@@ -132,6 +152,7 @@ export function parseBookPage(html, { bookId = null, pageId = null } = {}) {
     chapter: path.length ? path[path.length - 1].title : null,
     paragraphs: main,
     content: main.join("\n"),
+    narrator_links: narratorLinks(paras),
     footnotes,
     nav: { prev, next, last },
     title_tag: titleTag || null,

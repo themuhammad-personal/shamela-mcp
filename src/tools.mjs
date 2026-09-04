@@ -24,10 +24,10 @@ import {
   hadithNumbersOnPage,
   indexStatus,
 } from "./lib/hadith-index.mjs";
-import { detectHadithNumbers, extractHadith, detectAyahs, detectQuranBracketAyahs, gradingAcrossPages } from "./lib/citation-detect.mjs";
+import { detectHadithNumbers, extractHadith, detectAyahReferences, detectQuranBracketAyahs, gradingAcrossPages } from "./lib/citation-detect.mjs";
 import { normalizeArabic } from "./lib/arabic.mjs";
 
-export const SERVER_VERSION = "2.4.0";
+export const SERVER_VERSION = "2.5.0";
 
 const response = (x) => ({ content: [{ type: "text", text: JSON.stringify(x, null, 2) }] });
 
@@ -195,11 +195,14 @@ export function createServer(client = sharedClient) {
     async (x) => {
       const p = await client.bookPage(x.book_id, x.page_number);
       const onPage = hadithNumbersWithEvidence(x.book_id, p);
+      const ayahEvidence = detectAyahReferences(p.paragraphs);
       return response({
         ...p,
         hadith_numbers: onPage,
         hadith_numbers_source: onPage.length ? "page_markers" : "none",
-        ayah_refs: detectAyahs(p.paragraphs),
+        ayah_refs: ayahEvidence.refs,
+        ayah_ref_metadata: ayahEvidence.metadata,
+        ayah_refs_truncated: ayahEvidence.truncated,
         ...canonicalFields({ book_id: x.book_id, title: p.book_title }),
       });
     },
@@ -259,7 +262,7 @@ export function createServer(client = sharedClient) {
 
   tool(
     "get_narrator_biography",
-    "হাদিস রাবীর তরজমা (رجال card): shamela.ws/narrator/<id> — সনদের প্রতিটি নামে এই লিংক থাকে (get_book_page / get_hadith_by_number-এর isnad-এ)। ফেরত: নাম, লকব, কুনিয়া, নসব, আকীদা, জন্ম/মৃত্যু (হিজরি সংখ্যাসহ), তাকরীবের তবকা, ইবনে হাজার ও যাহাবীর রুতবা (Shamela যা ছাপে, হুবহু উদ্ধৃত), এবং «الجرح والتعديل» তালিকা — প্রতিটি নাকিদের নামে তার উক্তি + উৎস (যেমন [تهذيب التهذيب (3/ 28)])। কোনো গণনাকৃত 'reliability' নেই; শুধু উদ্ধৃত ও attributed উক্তি।",
+    "হাদিস রাবীর তরজমা (رجال card): shamela.ws/narrator/<id> — সনদের প্রতিটি নামে এই লিংক থাকে (get_book_page / get_hadith_by_number-এর isnad-এ)। ফেরত: নাম, লকব, কুনিয়া, নসব, আকীদা, জন্ম/মৃত্যু (হিজরি সংখ্যাসহ), তাকরীবের তবকা, ইবনে হাজার ও যাহাবীর রুতবা (Shamela যা ছাপে, হুবহু উদ্ধৃত), এবং «الجرح والتعديل» তালিকা — প্রতিটি নাকিদের নামে তার উক্তি + উৎস (যেমন [تهذي�� التهذيب (3/ 28)])। কোনো গণনাকৃত 'reliability' নেই; শুধু উদ্ধৃত ও attributed উক্তি।",
     { narrator_id: idParam },
     async (x) => {
       const r = await client.narratorTarjama(x.narrator_id);
@@ -319,6 +322,9 @@ export function createServer(client = sharedClient) {
               spans_pages: [cached.page],
               numbers_on_page: pageNumbers,
               routes_on_page: hit.routes_on_page,
+              narrator_links: (page.narrator_links ?? []).filter(
+                (link) => link.paragraph >= hit.starts_at_paragraph && link.paragraph < hit.starts_at_paragraph + hit.paragraphs.length,
+              ),
               verified_on_page: true,
               continuation_complete: complete,
               ...(complete ? {} : { continuation_note: "static index fallback returned the verified page only; the hadith continues beyond the bounded fallback page." }),
@@ -351,6 +357,11 @@ export function createServer(client = sharedClient) {
 
   function formatHadith(r, canon) {
     const pd = r.page_data ?? {};
+    const rec = canonicalRecord(r.book_id);
+    const numberingAmbiguous = rec?.perKitabNumbering === true;
+    const resolvedKitab = numberingAmbiguous
+      ? pd.chapter_path?.find((entry) => /(^|\s)كتاب(?:\s|$)/u.test(String(entry.title ?? "")))?.title ?? null
+      : null;
     // Editorial grading: ONLY an explicit «[حكم الألباني] : …» / «قال الألباني: …»
     // in the apparatus of the page(s) this hadith is printed on; attributed to
     // this hadith only when unambiguous. Tirmidhi's own «حسن صحيح» in the matn is
@@ -369,6 +380,14 @@ export function createServer(client = sharedClient) {
       printed_page: pd.printed_page,
       chapter_path: pd.chapter_path,
       matn: r.text,
+      narrator_links: r.narrator_links?.length ? r.narrator_links : undefined,
+      numbering_ambiguous: numberingAmbiguous,
+      ...(numberingAmbiguous
+        ? {
+            warning: "এই মুয়াত্তা সংস্করণে হাদিস নম্বর প্রতি কিতাবে পুনরায় শুরু হয়; (কিতাব, নম্বর) একসঙ্গে উল্লেখ ও chapter_path যাচাই করুন।",
+            resolved_kitab: resolvedKitab,
+          }
+        : {}),
       // Real pages are fully vocalised («حَدَّثَنَا»), so strip harakat first.
       isnad_present: /حدثنا|اخبرنا|انبانا|حدثني|اخبرني|سمعت/.test(normalizeArabic(r.text ?? "")),
       routes_on_page: r.routes_on_page,
@@ -380,6 +399,7 @@ export function createServer(client = sharedClient) {
       source: r.source,
       verified_on_page: r.verified_on_page ?? r.source !== "static_index",
       continuation_complete: r.continuation_complete ?? true,
+      ...(r.continuation_issue ? { continuation_issue: r.continuation_issue } : {}),
       ...(r.continuation_note ? { continuation_note: r.continuation_note } : {}),
       ...canon,
       citation: {

@@ -42,20 +42,24 @@ export function stripApiKeyFromUrl(value) {
   }
 }
 
-/** The key a request presents, or null. Order: Bearer → X-API-Key → ?key=. */
-export function presentedKey(request) {
+/** The credential a request presents. Order: Bearer → X-API-Key → deprecated ?key=. */
+export function presentedCredential(request) {
   const auth = request.headers.get("authorization") ?? "";
   const bearer = /^\s*Bearer\s+(.+?)\s*$/i.exec(auth)?.[1];
-  if (bearer) return bearer;
+  if (bearer) return { key: bearer, source: "bearer" };
   const header = request.headers.get("x-api-key");
-  if (header) return header.trim();
+  if (header) return { key: header.trim(), source: "x-api-key" };
   try {
     const q = new URL(request.url).searchParams.get("key");
-    if (q) return q;
+    if (q) return { key: q, source: "query" };
   } catch {
     /* unparsable URL → no key */
   }
   return null;
+}
+
+export function presentedKey(request) {
+  return presentedCredential(request)?.key ?? null;
 }
 
 /**
@@ -64,9 +68,12 @@ export function presentedKey(request) {
 export function authorize(request, env = {}) {
   const required = env?.MCP_API_KEY;
   if (!required) return { ok: true, mode: "open" };
-  const got = presentedKey(request);
-  if (!got) return { ok: false, reason: "missing_key" };
-  return safeEqual(got, required) ? { ok: true, mode: "key" } : { ok: false, reason: "bad_key" };
+  const credential = presentedCredential(request);
+  if (!credential) return { ok: false, reason: "missing_key" };
+  if (!safeEqual(credential.key, required)) return { ok: false, reason: "bad_key" };
+  return credential.source === "query"
+    ? { ok: true, mode: "key", credential_source: "query", deprecated: true }
+    : { ok: true, mode: "key" };
 }
 
 /** 401 body — plain JSON, no MCP framing (the transport never ran). */
@@ -76,7 +83,7 @@ export function unauthorizedResponse(reason, extraHeaders = {}) {
       ok: false,
       error: "unauthorized",
       reason,
-      hint: "This endpoint requires an API key. Send `Authorization: Bearer <key>` (or `X-API-Key`, or `?key=` for header-less clients).",
+      hint: "This endpoint requires an API key. Send `Authorization: Bearer <key>` (preferred) or `X-API-Key`. Deprecated `?key=` remains temporarily available only for header-less clients.",
     }),
     { status: 401, headers: { "Content-Type": "application/json; charset=utf-8", ...extraHeaders } },
   );

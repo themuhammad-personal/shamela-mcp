@@ -9,13 +9,14 @@ const PAGES = {
   "1727/62": {
     paragraphs: ["١ - (٨) أَبُو خَيْثَمَةَ زُهَيْرُ بْنُ حَرْبٍ. حَدَّثَنَا وَكِيعٌ …", "كَانَ أَوَّلَ مَنْ قَالَ فِي الْقَدَرِ …", "⦗٣٧⦘", "قَالَ: فَإِنَّهُ جبريل أتاكم يعلمكم دينكم"],
     footnotes: ["(أول من قال بالقدر) معناه أول من قال بنفي القدر"],
+    narrator_links: [{ narrator_id: "100", name: "أبو خيثمة", url: "https://shamela.ws/narrator/100", paragraph: 0 }],
     nav: { prev: "61", next: "63", last: "7495" },
     volume: "1", printed_page: "36",
     chapter_path: [{ title: "١ - كتاب الإيمان", page: "60" }, { title: "(١) باب بيان الإيمان", page: "61" }],
   },
   "1727/63": {
     paragraphs: ["٢ - (٨) حَدَّثَنِي مُحَمَّدُ بْنُ عُبَيْدٍ الْغُبَرِيُّ …", "٣ - (٨) وَحَدَّثَنِي مُحَمَّدُ بْنُ حَاتِمٍ …"],
-    footnotes: [], nav: { prev: "62", next: "64", last: "7495" }, volume: "1", printed_page: "37", chapter_path: [],
+    footnotes: [], narrator_links: [{ narrator_id: "101", name: "محمد بن عبيد", url: "https://shamela.ws/narrator/101", paragraph: 0 }], nav: { prev: "62", next: "64", last: "7495" }, volume: "1", printed_page: "37", chapter_path: [],
   },
   "1727/7494": {
     paragraphs: ["٤٠ - (٣٠٣٣) حَدَّثَنَا أَبُو بَكْرِ بْنُ أَبِي شَيْبَةَ …"],
@@ -60,7 +61,7 @@ const json = async (name, args) => JSON.parse((await call(name, args)).content[0
 
 test("server registers 14 tools via registerTool and reports the package version", () => {
   assert.equal(Object.keys(s._registeredTools).length, 14);
-  assert.equal(SERVER_VERSION, "2.4.0");
+  assert.equal(SERVER_VERSION, "2.5.0");
   assert.ok(s._registeredTools.get_narrator_biography, "Roadmap 3.3 tool present");
   for (const t of Object.values(s._registeredTools)) assert.ok(t.inputSchema, "every tool has an input schema");
 });
@@ -119,10 +120,33 @@ test("get_hadith_by_number: live lookup → verified on page, continues across t
   assert.ok(d.matn.includes("٣ - (٨)"), "routes of the same number on the next page are appended");
   assert.deepEqual(d.spans_pages, ["62", "63"]);
   assert.deepEqual(d.routes_on_page, ["1"]);
+  assert.deepEqual(d.narrator_links.map((link) => link.narrator_id), ["100", "101"]);
   assert.equal(d.isnad_present, true);
   assert.equal(d.is_canonical_numbering, true);
   assert.equal(d.citation.numbering, "ترقيم محمد فؤاد عبد الباقي");
   assert.equal(d.citation.printed_page, "36");
+});
+
+test("get_hadith_by_number: Muwatta ambiguity and resolved kitab are unavoidable at top level", async () => {
+  const srv = createServer(mockClient({
+    hadithPageId: async () => "2643",
+    bookPage: async () => ({
+      book_id: "1699", page_number: "2643", paragraphs: ["١ - حَدَّثَنِي مَالِكٌ …"], narrator_links: [], footnotes: [],
+      nav: {}, volume: "2", printed_page: "999", chapter_path: [{ title: "كتاب أسماء النبي صلى الله عليه وسلم", page: "2640" }],
+      book_title: "موطأ مالك - رواية يحيى - ت عبد الباقي", author: "مالك", url: "https://shamela.ws/book/1699/2643",
+    }),
+  }));
+  const d = JSON.parse((await srv._registeredTools.get_hadith_by_number.handler({ book_id: "1699", hadith_number: "1" })).content[0].text);
+  assert.equal(d.found, true);
+  assert.equal(d.numbering_ambiguous, true);
+  assert.equal(d.resolved_kitab, "كتاب أسماء النبي صلى الله عليه وسلم");
+  assert.match(d.warning, /প্রতি কিতাবে/);
+});
+
+test("get_hadith_by_number: globally numbered books are not marked ambiguous", async () => {
+  const d = await json("get_hadith_by_number", { book_id: "1727", hadith_number: "8" });
+  assert.equal(d.numbering_ambiguous, false);
+  assert.equal(d.warning, undefined);
 });
 
 test("get_hadith_by_number: out-of-range number is refused BEFORE hitting the network", async () => {
@@ -234,7 +258,7 @@ test("get_tafsir_by_ayah: al-Fatiha (no ﴿…﴾ blocks in Ibn Kathir) → sura
     mockClient({
       bookPage: async (id, p) => {
         fetched.push(Number(p));
-        return { book_id: id, page_number: String(p), paragraphs: ["(إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ) قرأ السبعة (١)"], content: "…", footnotes: ["(١) في جـ"], chapter_path: [], nav: {}, volume: "1", printed_page: "134", url: `u/${p}` };
+        return { book_id: id, page_number: String(p), paragraphs: ["(إِيَّاكَ ��َعْبُدُ وَإِيَّاكَ نَسْتَعِينُ) قرأ السبعة (١)"], content: "…", footnotes: ["(١) في جـ"], chapter_path: [], nav: {}, volume: "1", printed_page: "134", url: `u/${p}` };
       },
     }),
   );
@@ -362,6 +386,7 @@ test("get_hadith_by_number exposes when the bounded continuation cap leaves text
   const d = JSON.parse((await srv._registeredTools.get_hadith_by_number.handler({ book_id: "123", hadith_number: 1 })).content[0].text);
   assert.equal(d.found, true);
   assert.equal(d.continuation_complete, false);
+  assert.equal(d.continuation_issue, "continuation_limit_reached");
   assert.match(d.continuation_note, /limit|সীমা/i);
 });
 

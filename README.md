@@ -54,7 +54,9 @@ shamela hosts several editions of each collection; only one per work carries the
 - Book pages: `div.nass > p` main text, `p.hamesh` footnotes, `#fld_part_top` volume, `#fld_goto_top` printed page, `div.size-12` chapter path (parser: `src/lib/page.mjs`, tested on a real page in `test/fixtures/`)
 - A persisted hadith/tafsir index is only a location hint. Hadith results require the requested `N -` marker on the fetched page; exact tafsir results require the requested ayah marker on the fetched page. A stale or malformed index therefore produces `found: false`, not a borrowed passage.
 
-Politeness: per-isolate concurrency cap 4, 20 s timeout, 15-min response cache, in-flight de-duplication; the hadith index builder defaults to a 250 ms delay and the tafsir builder to 400 ms. Keep live runs narrow and delayed.
+Politeness: per-isolate concurrency cap 4, 20 s timeout, 15-min in-memory and Cloudflare Cache API response caching, in-flight de-duplication, and bounded 429/503-only retries that honor `Retry-After`. Builders check `robots.txt`, default to delayed requests, enforce hard slice caps, and support `--checkpoint … --resume`; keep every live run narrow and never use this project for corpus mirroring or AI training.
+
+Parsed book pages expose `narrator_links[]` with Shamela narrator IDs, names, URLs, and paragraph positions when the live HTML contains `/narrator/<id>` anchors. This is discovery evidence only: narrator reliability or hadith grading is never inferred from the link.
 
 ## Project layout
 
@@ -95,14 +97,15 @@ test/                              147 offline tests (node --test), incl. real-p
 
 ```bash
 npm ci                         # reproducible lockfile install
-npm test                       # offline tests
+npm test                       # offline tests; live tests are skipped
+npm run test:live              # explicit live citation + markup canaries
 npm run verify                 # tests + wrangler dry-run build (CI health gate)
 npm run dev                    # local wrangler dev
 npm run deploy                 # deploy (needs CLOUDFLARE_API_TOKEN or wrangler login)
 npm run resolve:canonical      # re-check canonical ids against live shamela.ws
-node scripts/build-hadith-index.mjs --book 1681 --step=50 --dry-run   # smoke-run the hadith index builder
-npm run build:tafsir -- --tafsir 8473 --delay=400                       # fill the tafsir index (~30 min, resumable with --from/--surah)
-npm run build:tafsir -- --tafsir 7798 --delay=400                       # same for al-Tabari (16 700 pages) / 20855 al-Qurtubi (7 453 pages)
+node scripts/build-hadith-index.mjs --book 1681 --from=1 --to=1000 --max-lookups=1000 --checkpoint=.hadith.json --resume
+npm run build:tafsir -- --tafsir 8473 --from=1 --to=1000 --max-pages=1000 --checkpoint=.tafsir.json --resume
+# Run further bounded slices deliberately; Muwatta 1699 is rejected because its numbering restarts per kitab.
 node scripts/check-coverage.mjs
 ```
 
@@ -116,13 +119,15 @@ The Worker is open by default (anyone who knows the URL can call `/mcp`). To req
 wrangler secret put MCP_API_KEY        # paste a long random string
 ```
 
-With the secret set, every request to `/mcp` must carry the key in one of three places — `Authorization: Bearer <key>`, `X-API-Key: <key>`, or `?key=<key>` (for clients that cannot set headers). Anything else gets `401 {"error":"unauthorized","reason":"missing_key"|"bad_key"}` with `WWW-Authenticate: Bearer realm="shamela-mcp"`. Keys are compared in constant time; CORS pre-flights (`OPTIONS`) and the `/` status page stay open (the status page only says *whether* a key is required). Unset the secret (`wrangler secret delete MCP_API_KEY`) to go back to open access. Example client config:
+With the secret set, every request to `/mcp` must carry `Authorization: Bearer <key>` (preferred) or `X-API-Key: <key>`. The legacy `?key=<key>` path remains temporarily available only for header-less clients, is deprecated, and returns `Deprecation: true` plus a `Warning` response header because query credentials leak more easily through URLs and logs. Anything else gets `401 {"error":"unauthorized","reason":"missing_key"|"bad_key"}` with `WWW-Authenticate: Bearer realm="shamela-mcp"`. Keys are compared in constant time; CORS pre-flights (`OPTIONS`) and the `/` status page stay open (the status page only says *whether* a key is required). Unset the secret (`wrangler secret delete MCP_API_KEY`) to go back to open access. Example client config:
 
 ```json
 { "mcpServers": { "shamela": { "url": "https://shamela-mcp.themuhammadpersonal.workers.dev/mcp", "headers": { "Authorization": "Bearer <key>" } } } }
 ```
 
-Upstream protection is independent of the key and always on: per-isolate concurrency cap 4, 20 s timeout, 15-minute cache, in-flight de-duplication.
+Upstream protection is independent of the key and always on: per-isolate concurrency cap 4, 20 s timeout, shared 15-minute cache, in-flight de-duplication, and bounded retries.
+
+Muwatta 1699 uses per-kitab numbering. Successful lookups therefore always return top-level `numbering_ambiguous: true`, a warning, and `resolved_kitab` only when the fetched page's `chapter_path` proves it. It is deliberately excluded from the global static hadith index; callers must cite and verify `(kitab, number)` together.
 
 ## Terms, attribution & copyright
 

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { robotsAllows } from "../scripts/lib/crawl-policy.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -44,4 +45,31 @@ test("tafsir index builder rejects invalid surah selectors before any live work"
 test("tafsir index builder allows the absent surah selector", () => {
   const result = run("build-tafsir-index.mjs", "--tafsir=8473", "--dry-run");
   assert.doesNotMatch(result.stderr, /--surah must contain/);
+});
+
+test("hadith builder rejects an oversized slice and unsafe global Muwatta indexing before network", () => {
+  const oversized = run("build-hadith-index.mjs", "--book=1681", "--from=1", "--to=100", "--max-lookups=10", "--dry-run");
+  assert.notEqual(oversized.status, 0);
+  assert.match(oversized.stderr, /exceeds --max-lookups/);
+  const muwatta = run("build-hadith-index.mjs", "--book=1699", "--dry-run");
+  assert.notEqual(muwatta.status, 0);
+  assert.match(muwatta.stderr, /numbering restarts per kitab/);
+});
+
+test("builder limit and checkpoint options are validated offline", () => {
+  for (const [script, option] of [
+    ["build-hadith-index.mjs", "--max-lookups=0"],
+    ["build-hadith-index.mjs", "--timeout=0"],
+    ["build-tafsir-index.mjs", "--max-pages=0"],
+    ["build-tafsir-index.mjs", "--checkpoint-every=0"],
+  ]) {
+    const result = run(script, option, "--dry-run");
+    assert.notEqual(result.status, 0);
+  }
+});
+
+test("robots policy fails closed and honors longest matching rule", () => {
+  assert.equal(robotsAllows("User-agent: *\nAllow: /\n", "/book/1"), true);
+  assert.equal(robotsAllows("User-agent: *\nAllow: /\nDisallow: /ajax/\n", "/ajax/book"), false);
+  assert.equal(robotsAllows("User-agent: Other\nAllow: /\n", "/book/1"), false);
 });

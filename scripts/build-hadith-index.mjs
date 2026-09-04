@@ -36,6 +36,7 @@ import { createClient } from "../src/lib/shamela.mjs";
 import { detectHadithMarkers } from "../src/lib/citation-detect.mjs";
 import existingIndex from "../src/data/hadith-index.mjs";
 import canonicalBookIds from "../src/data/canonical-book-ids.mjs";
+import { assertRobotsAllowed, readCheckpoint, writeCheckpoint } from "./lib/crawl-policy.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT_PATH = resolve(__dirname, "../src/data/hadith-index.mjs");
@@ -58,6 +59,11 @@ const FROM = numberOpt("from", 1, 1);
 const TO = numberOpt("to", 0, 0); // 0 → edition's last_number
 const STEP = numberOpt("step", 1, 1);
 const DELAY_MS = numberOpt("delay", 250, 0);
+const MAX_LOOKUPS = numberOpt("max-lookups", 10_000, 1);
+const TIMEOUT_MS = numberOpt("timeout", 20_000, 1);
+const CHECKPOINT_EVERY = numberOpt("checkpoint-every", 100, 1);
+const CHECKPOINT_PATH = resolve(rawOpt("checkpoint") || resolve(__dirname, "../.hadith-index.checkpoint.json"));
+const RESUME = args.includes("--resume");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const list = (flag) => {
@@ -86,8 +92,15 @@ if (args.some((arg) => arg === "--tafsir" || arg.startsWith("--tafsir="))) {
   process.exit(1);
 }
 
+const ambiguousExplicit = explicitBooks.find((id) => editions.find((e) => String(e.book_id) === id)?.perKitabNumbering === true);
+if (ambiguousExplicit) {
+  console.error(`✖ ${ambiguousExplicit}: global indexing is unsafe because numbering restarts per kitab; use kitab-scoped indexing when implemented.`);
+  process.exit(1);
+}
+
 const hadithTargets = editions
   .filter((e) => e.type === "hadith")
+  .filter((e) => e.perKitabNumbering !== true)
   .filter((e) => (explicitBooks.length ? explicitBooks.includes(String(e.book_id)) : true))
   .concat(explicitBooks.filter((id) => !editions.some((e) => String(e.book_id) === id)).map((id) => ({ key: null, book_id: id, type: "hadith" })));
 
@@ -108,34 +121,31 @@ for (const ed of hadithTargets) {
   if (FROM > to) {
     console.error(`✖ ${bookId}: --from=${FROM} is after the requested end ${to}`);
   }
+  const lookups = FROM <= to ? Math.floor((to - FROM) / STEP) + 1 : 0;
+  if (lookups > MAX_LOOKUPS) {
+    console.error(`✖ ${bookId}: requested ${lookups} lookups exceeds --max-lookups=${MAX_LOOKUPS}; split the range explicitly.`);
+    process.exit(1);
+  }
 }
 if (DRY_RUN) {
   console.log(`--dry-run: would index ${hadithTargets.map((e) => e.book_id).join(", ")} and write ${OUT_PATH}`);
   process.exit(0);
 }
 
-const http = createHttp({ ttl: 0 });
+await assertRobotsAllowed();
+const http = createHttp({ ttl: 0, timeoutMs: TIMEOUT_MS, maxRetries: 3 });
 const client = createClient({ text: http.text });
 const index = { generated_at: new Date().toISOString(), books: { ...(existingIndex?.books ?? {}) } };
 let newEntries = 0;
 let attemptedLookup = false;
 let skippedTarget = false;
 let targetWithRange = false;
-
-async function retry(fn, tries = 4) {
-  let last;
-  for (let i = 0; i < tries; i += 1) {
-    try {
-      return await fn();
-    } catch (e) {
-      last = e;
-      const backoff = /HTTP 429|HTTP 403/.test(e.message) ? 30_000 * (i + 1) : 2_000 * (i + 1);
-      console.error(`   ! ${e.message} — retry in ${backoff / 1000}s`);
-      await sleep(backoff);
-    }
-  }
-  throw last;
-}
+const checkpoint = RESUME ? readCheckpoint(CHECKPOINT_PATH, { version: 1, books: {} }) : { version: 1, books: {} };
+const flushCheckpoint = () => writeCheckpoint(CHECKPOINT_PATH, checkpoint);
+for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => {
+  flushCheckpoint();
+  process.exit(130);
+});
 
 for (const ed of hadithTargets) {
   const bookId = String(ed.book_id);
@@ -155,18 +165,26 @@ for (const ed of hadithTargets) {
   const prev = index.books[bookId]?.type === "hadith" ? index.books[bookId] : { type: "hadith", index: {}, reverse: {} };
   const forward = { ...prev.index };
   const reverse = Object.fromEntries(Object.entries(prev.reverse ?? {}).map(([k, v]) => [k, [...v]]));
-  const pageNumbers = new Map(); // page → Set(numbers claimed by specialnumber2id)
+  const saved = checkpoint.books[bookId]?.claims ?? {};
+  const pageNumbers = new Map(Object.entries(saved).map(([page, nums]) => [page, new Set(nums)]));
   let missing = 0;
+  let processed = 0;
+  let targetFailed = false;
 
-  for (let n = FROM; n <= to; n += STEP) {
-    if (forward[n]?.verified) continue; // resume support
+  const claimed = new Set([...pageNumbers.values()].flatMap((nums) => [...nums]));
+  const resumeFrom = RESUME && checkpoint.books[bookId]?.next_number ? Number(checkpoint.books[bookId].next_number) : FROM;
+  for (let n = resumeFrom; n <= to; n += STEP) {
+    if (forward[n]?.verified || claimed.has(String(n))) continue;
     attemptedLookup = true;
     let page;
     try {
-      page = await retry(() => client.hadithPageId(bookId, n));
+      page = await client.hadithPageId(bookId, n);
     } catch (e) {
-      console.error(`   ! ${n}: ${e.message}`);
-      continue;
+      targetFailed = true;
+      checkpoint.books[bookId] = { from: FROM, to, step: STEP, next_number: n, claims: Object.fromEntries([...pageNumbers].map(([p, nums]) => [p, [...nums]])) };
+      flushCheckpoint();
+      console.error(`   ! ${n}: ${e.message} — stopping this slice; resume with --resume`);
+      break;
     }
     if (!page) {
       missing += 1;
@@ -174,6 +192,11 @@ for (const ed of hadithTargets) {
     }
     if (!pageNumbers.has(page)) pageNumbers.set(page, new Set());
     pageNumbers.get(page).add(String(n));
+    processed += 1;
+    if (processed % CHECKPOINT_EVERY === 0) {
+      checkpoint.books[bookId] = { from: FROM, to, step: STEP, claims: Object.fromEntries([...pageNumbers].map(([p, nums]) => [p, [...nums]])) };
+      flushCheckpoint();
+    }
     if (n % 100 === 0) console.log(`   … ${n}/${to} (${pageNumbers.size} pages so far)`);
     await sleep(DELAY_MS);
   }
@@ -184,7 +207,7 @@ for (const ed of hadithTargets) {
   for (const [page, nums] of pageNumbers) {
     let pd;
     try {
-      pd = await retry(() => client.bookPage(bookId, page));
+      pd = await client.bookPage(bookId, page);
     } catch (e) {
       console.error(`   ! page ${page}: ${e.message}`);
       continue;
@@ -201,7 +224,14 @@ for (const ed of hadithTargets) {
     await sleep(DELAY_MS);
   }
   for (const k of Object.keys(reverse)) reverse[k].sort((a, b) => Number(a) - Number(b));
-  index.books[bookId] = { type: "hadith", ...(ed.key ? { key: ed.key } : {}), index: forward, reverse };
+  if (targetFailed) {
+    skippedTarget = true;
+    console.error(`   ✖ ${bookId}: incomplete slice; verified data was not written`);
+    continue;
+  }
+  index.books[bookId] = { type: "hadith", ...(ed.key ? { key: ed.key } : {}), coverage: STEP === 1 && FROM === 1 && to === ed.last_number ? "complete" : "partial", index: forward, reverse };
+  delete checkpoint.books[bookId];
+  flushCheckpoint();
   console.log(`   ✔ ${verified} verified, ${unverified} unverified (kept with note), ${missing} numbers not found by shamela`);
 }
 

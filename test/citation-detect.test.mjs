@@ -5,6 +5,7 @@ import {
   detectHadithNumbers,
   extractHadith,
   detectAyahs,
+  detectAyahReferences,
   detectQuranBracketAyahs,
   ayahHeadingInParagraph,
   quranBracketAyahsInParagraph,
@@ -96,8 +97,21 @@ test("prose form «سورة X: N» / «الآية» / ranges", () => {
   assert.deepEqual(detectAyahs("قوله تعالى في سورة البقرة: ٢٥٥"), ["2:255"]);
   assert.deepEqual(detectAyahs("سورة آل عمران: 5"), ["3:5"]);
   assert.deepEqual(detectAyahs("سورة المائدة الآية ٣"), ["5:3"]);
-  assert.deepEqual(detectAyahs("سورة البقرة 10-12"), ["2:10", "2:11", "2:12"]);
-  assert.equal(detectAyahs("سورة البقرة 1-200").length, 50);
+  assert.deepEqual(detectAyahs("سورة البقرة 10-12"), [], "bare prose numbers are not explicit enough");
+  const long = detectAyahReferences("سورة البقرة: 1-200");
+  assert.equal(long.refs.length, 50);
+  assert.equal(long.truncated, true);
+  assert.deepEqual(long.metadata[0], {
+    source: "prose",
+    surah: 2,
+    from: 1,
+    to: 200,
+    raw: "سورة البقرة: 1-200",
+    truncated: true,
+    included_count: 50,
+    omitted_count: 150,
+    note: "Range expansion is bounded to 50; inspect the explicit from/to bounds.",
+  });
 });
 
 test("bracket form «[البقرة: ٢٥٥]» (the layout Ibn Kathir ت السلامة actually uses)", () => {

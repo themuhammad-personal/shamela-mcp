@@ -54,6 +54,10 @@ export default {
     // Mirror the permissive CORS the preflight promised on the real response.
     const headers = new Headers(res.headers);
     for (const [k, v] of Object.entries(CORS)) if (!headers.has(k)) headers.set(k, v);
+    if (auth.deprecated) {
+      headers.set("Deprecation", "true");
+      headers.set("Warning", '299 shamela-mcp "Query-string API keys are deprecated; use Authorization: Bearer or X-API-Key"');
+    }
     return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
   },
 };

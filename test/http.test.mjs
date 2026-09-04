@@ -88,6 +88,45 @@ test("non-2xx becomes a classifiable 'Shamela returned HTTP <status>' error", as
   await assert.rejects(() => http.text("u"), /HTTP 429/);
 });
 
+test("retries only 429/503 with bounded Retry-After-aware delays", async () => {
+  const waits = [];
+  let calls = 0;
+  const http = createHttp({
+    maxRetries: 2,
+    sleep: async (ms) => waits.push(ms),
+    random: () => 0,
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1) return new Response("busy", { status: 503, headers: { "Retry-After": "2" } });
+      return new Response("ok");
+    },
+  });
+  assert.equal(await http.text("https://shamela.ws/book/1/1"), "ok");
+  assert.deepEqual(waits, [2000]);
+  assert.equal(calls, 2);
+
+  let forbiddenCalls = 0;
+  const forbidden = createHttp({ maxRetries: 5, fetchImpl: async () => ((forbiddenCalls += 1), new Response("no", { status: 403 })) });
+  await assert.rejects(() => forbidden.text("https://shamela.ws/book/1/1"), /HTTP 403/);
+  assert.equal(forbiddenCalls, 1);
+});
+
+test("Cloudflare Cache API stores successful GETs and ttl=0 bypasses it", async () => {
+  const entries = new Map();
+  const fakeCache = {
+    async match(request) { return entries.get(request.url)?.clone(); },
+    async put(request, response) { entries.set(request.url, response.clone()); },
+  };
+  let calls = 0;
+  const first = createHttp({ cacheStorage: fakeCache, fetchImpl: async () => ((calls += 1), new Response("shared")) });
+  assert.equal(await first.text("https://shamela.ws/book/1/1"), "shared");
+  const second = createHttp({ cacheStorage: fakeCache, fetchImpl: async () => ((calls += 1), new Response("network")) });
+  assert.equal(await second.text("https://shamela.ws/book/1/1"), "shared");
+  assert.equal(calls, 1);
+  const bypass = createHttp({ ttl: 0, cacheStorage: fakeCache, fetchImpl: async () => ((calls += 1), new Response("fresh")) });
+  assert.equal(await bypass.text("https://shamela.ws/book/1/1"), "fresh");
+});
+
 test("aborts on timeout", async () => {
   const http = createHttp({
     timeoutMs: 10,
