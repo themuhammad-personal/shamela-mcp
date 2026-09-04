@@ -11,7 +11,7 @@ An MCP (Model Context Protocol) server that exposes **[shamela.ws](https://shame
 | `get_categories` | Full category list with id / name / book_count |
 | `get_books_by_category` | Paginated book list per category |
 | `get_book_details` | Title, author, muhaqqiq, publisher, parts, TOC, `pagination_matches_print`, `hadith_numbering_service`, canonical-edition flag |
-| `get_book_page` | Page text as **paragraphs + footnotes** (separated), volume / printed page, chapter path, prev/next, hadith numbers printed on the page, ayah refs |
+| `get_book_page` | Page text as **paragraphs + footnotes** (separated), volume / printed page, chapter path, prev/next, hadith numbers printed on the page when the edition/page provides evidence, ayah refs |
 | `search_books_by_name` | Ranked title autocomplete + canonical-edition flag per result (non-canonical editions point at the canonical `book_id`) |
 | `search_library` | Native full-text search with any/all/exact, exclude, category, century filters, pagination. Results are `{title, author, url, snippet, book_id, page_id}`; `hadith_numbers` appears only when the static hadith index knows the page (`hadith_numbers_note` says so) |
 | `get_author_books` | Author name, their published books **and the «تعريف بالمؤلف» biography** shamela prints under the list (headline with hijri/CE dates, full name, bullet biography, `works`, footnote `references`, `source` — usually «الأعلام» للزركلي); `biography: null` + `biography_status` when the page has none |
@@ -23,7 +23,7 @@ An MCP (Model Context Protocol) server that exposes **[shamela.ws](https://shame
 | `get_page_by_printed_number` | Printed `(volume, page)` → shamela page (`/ajax/pagenum2id`) |
 | `list_canonical_editions` | The hand-verified canonical edition table (below) with provenance |
 
-Every tool returns structured errors (`upstream_http` / `network` / `bad_request` / `internal`) with a hint, and never fabricates a number or page: a lookup that cannot be proven on the page returns `{ found: false, reason }`.
+Every tool returns structured errors (`upstream_http` / `upstream_invalid` / `network` / `bad_request` / `internal`) with a hint, and never fabricates a number or page: a lookup that cannot be proven on the page returns `{ found: false, reason }`. HTTP 200 empty/challenge bodies are treated as `upstream_invalid`, not as successful empty search results.
 
 ## Canonical editions (verified 2026-09-03)
 
@@ -52,8 +52,9 @@ shamela hosts several editions of each collection; only one per work carries the
 - `GET /ajax/pagenum2id/<book>/<part>/<page>` → page id for a printed page
 - `POST /ajax/search` with `term`, `aqsam[]`, `decades[]`, `page` → HTML fragment
 - Book pages: `div.nass > p` main text, `p.hamesh` footnotes, `#fld_part_top` volume, `#fld_goto_top` printed page, `div.size-12` chapter path (parser: `src/lib/page.mjs`, tested on a real page in `test/fixtures/`)
+- A persisted hadith/tafsir index is only a location hint. Hadith results require the requested `N -` marker on the fetched page; exact tafsir results require the requested ayah marker on the fetched page. A stale or malformed index therefore produces `found: false`, not a borrowed passage.
 
-Politeness: per-isolate concurrency cap 4, 20 s timeout, 15-min response cache, in-flight de-duplication; index builder sleeps ≥250 ms between requests.
+Politeness: per-isolate concurrency cap 4, 20 s timeout, 15-min response cache, in-flight de-duplication; the hadith index builder defaults to a 250 ms delay and the tafsir builder to 400 ms. Keep live runs narrow and delayed.
 
 ## Project layout
 
@@ -82,9 +83,9 @@ src/
 scripts/
   resolve-canonical-editions.mjs   re-check the whitelist against live shamela (--list <title> to explore)
   build-hadith-index.mjs           build the static hadith index via specialnumber2id + on-page verification
-  build-tafsir-index.mjs           walk a tafsir book once (offline) → surah ranges + every ayah's first page
+  build-tafsir-index.mjs           live, delayed one-book walk → surah ranges + every ayah's first page
   check-coverage.mjs               probe for absent subcontinental works → reports/
-test/                              125 offline tests (node --test), incl. real-page fixture
+test/                              143 offline tests (node --test), incl. real-page fixture
 .github/workflows/
   deploy.yml                Node 22, npm ci, tests, dry-run, deploy on push to main
   refresh-index.yml         manual/monthly: verify whitelist, coverage report, build index → PR
@@ -93,9 +94,9 @@ test/                              125 offline tests (node --test), incl. real-p
 ## Development
 
 ```bash
-npm install
+npm ci                         # reproducible lockfile install
 npm test                       # offline tests
-npm run verify                 # tests + wrangler dry-run build
+npm run verify                 # tests + wrangler dry-run build (CI health gate)
 npm run dev                    # local wrangler dev
 npm run deploy                 # deploy (needs CLOUDFLARE_API_TOKEN or wrangler login)
 npm run resolve:canonical      # re-check canonical ids against live shamela.ws
@@ -105,7 +106,7 @@ npm run build:tafsir -- --tafsir 7798 --delay=400                       # same f
 node scripts/check-coverage.mjs
 ```
 
-Requires **Node ≥ 22** (wrangler 4.9x).
+Requires **Node ≥ 22** (the lockfile currently resolves Wrangler 4.128.0).
 
 ## Protecting the endpoint (optional API key)
 
@@ -134,6 +135,14 @@ Upstream protection is independent of the key and always on: per-isolate concurr
 ## Known data gaps
 
 Some subcontinental Hanafi / Urdu-origin works (e.g. معارف القرآن, بيان القرآن, أحسن الفتاوى) are absent from shamela.ws's Arabic corpus (أحسن الفتاوى confirmed absent 2026-09-03). Tool descriptions say so explicitly: an empty result ≠ "the work doesn't exist".
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the offline test/verification gate,
+fixture policy, live Shamela load limits, generated-index rules, and pull-request
+expectations. In short: run `npm ci && npm test && npm run verify`, keep parser
+regressions offline and real-shaped, preserve tool/output compatibility, and
+never guess or fabricate an unverified citation.
 
 ## License
 
