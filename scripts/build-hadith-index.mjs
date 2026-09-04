@@ -96,6 +96,24 @@ if (!hadithTargets.length) {
   process.exit(1);
 }
 
+// Validate every target's range BEFORE doing any live work, so --dry-run
+// (and CI) can verify arguments without ever touching the network.
+for (const ed of hadithTargets) {
+  const bookId = String(ed.book_id);
+  const to = TO || ed.last_number || 0;
+  if (!to) {
+    console.error(`✖ ${bookId}: no --to and no last_number in canonical data — skipping`);
+    continue;
+  }
+  if (FROM > to) {
+    console.error(`✖ ${bookId}: --from=${FROM} is after the requested end ${to}`);
+  }
+}
+if (DRY_RUN) {
+  console.log(`--dry-run: would index ${hadithTargets.map((e) => e.book_id).join(", ")} and write ${OUT_PATH}`);
+  process.exit(0);
+}
+
 const http = createHttp({ ttl: 0 });
 const client = createClient({ text: http.text });
 const index = { generated_at: new Date().toISOString(), books: { ...(existingIndex?.books ?? {}) } };
