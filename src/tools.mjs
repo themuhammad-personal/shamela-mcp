@@ -24,12 +24,19 @@ import {
   hadithNumbersOnPage,
   indexStatus,
 } from "./lib/hadith-index.mjs";
-import { detectHadithNumbers, detectAyahs, gradingAcrossPages } from "./lib/citation-detect.mjs";
+import { detectHadithNumbers, extractHadith, detectAyahs, gradingAcrossPages } from "./lib/citation-detect.mjs";
 import { normalizeArabic } from "./lib/arabic.mjs";
 
 export const SERVER_VERSION = "2.4.0";
 
 const response = (x) => ({ content: [{ type: "text", text: JSON.stringify(x, null, 2) }] });
+
+// Keep the upstream cache, concurrency gate, in-flight de-duplication and
+// details cache alive for the lifetime of a Worker isolate. A new MCP server
+// and transport is still created per stateless HTTP request, but the expensive
+// upstream state must not be recreated with them.
+const sharedHttp = createHttp();
+const sharedClient = createClient({ text: sharedHttp.text });
 
 const idParam = z.string().regex(/^\d+$/);
 const intId = z.coerce.string().regex(/^\d+$/);
@@ -109,7 +116,7 @@ function guarded(tool, handler) {
   };
 }
 
-export function createServer(client = createClient({ text: createHttp().text })) {
+export function createServer(client = sharedClient) {
   const s = new McpServer({ name: "shamela-library", version: SERVER_VERSION });
   // `registerTool` is the non-deprecated API in SDK ≥1.30 (`tool()` is @deprecated).
   const tool = (name, description, schema, handler) =>
