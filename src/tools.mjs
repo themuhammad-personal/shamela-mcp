@@ -116,8 +116,35 @@ function guarded(tool, handler) {
   };
 }
 
+// The SDK validates tool arguments before invoking the callback. Override its
+// plain-text validation result so malformed calls obey the same public contract
+// as upstream/runtime failures.
+class StructuredMcpServer extends McpServer {
+  createToolError(errorMessage) {
+    const message = String(errorMessage ?? "unknown error");
+    const validation = /Input validation error: Invalid arguments for tool ([A-Za-z0-9_-]+):\s*([\s\S]*)/i.exec(message);
+    const tool = validation?.[1] ?? /tool\s+([A-Za-z0-9_-]+)/i.exec(message)?.[1] ?? "unknown";
+    const info = validation
+      ? { kind: "bad_request", message: sanitize(validation[2] || message), hint: "tool-এর arguments সঠিক নয় — schema অনুযায়ী পাঠান।" }
+      : classifyError(message);
+    return {
+      ...response({
+        ok: false,
+        tool,
+        error: info.kind,
+        detail: info.message,
+        ...(info.status ? { status: info.status } : {}),
+        hint: info.hint,
+        fabricated: false,
+        note: "কোনো তথ্য অনুমান করা হয়নি — source থেকে কিছুই ফেরত দেওয়া হয়নি।",
+      }),
+      isError: true,
+    };
+  }
+}
+
 export function createServer(client = sharedClient) {
-  const s = new McpServer({ name: "shamela-library", version: SERVER_VERSION });
+  const s = new StructuredMcpServer({ name: "shamela-library", version: SERVER_VERSION });
   // `registerTool` is the non-deprecated API in SDK ≥1.30 (`tool()` is @deprecated).
   const tool = (name, description, schema, handler) =>
     s.registerTool(name, { description, inputSchema: schema }, guarded(name, handler));
