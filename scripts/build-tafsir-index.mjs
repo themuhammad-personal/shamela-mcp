@@ -65,7 +65,7 @@ const FROM = numberOpt("from", 0, 0);
 const TO = numberOpt("to", 0, 0);
 const rawSurah = rawOpt("surah");
 const SURAHS = rawSurah === undefined ? [] : rawSurah.split(",").map((s) => s.trim());
-if (!SURAHS.length || SURAHS.some((s) => !/^\d+$/.test(s) || Number(s) < 1 || Number(s) > 114)) {
+if (rawSurah !== undefined && (!SURAHS.length || SURAHS.some((s) => !/^\d+$/.test(s) || Number(s) < 1 || Number(s) > 114))) {
   console.error("✖ --surah must contain comma-separated surah numbers from 1 to 114");
   process.exit(1);
 }

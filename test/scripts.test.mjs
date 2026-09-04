@@ -40,3 +40,8 @@ test("tafsir index builder rejects invalid surah selectors before any live work"
   assert.match(result.stderr, /--surah must contain/);
   assert.equal(result.error, undefined);
 });
+
+test("tafsir index builder allows the absent surah selector", () => {
+  const result = run("build-tafsir-index.mjs", "--tafsir=8473", "--dry-run");
+  assert.doesNotMatch(result.stderr, /--surah must contain/);
+});
