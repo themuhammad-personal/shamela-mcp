@@ -29,6 +29,11 @@ function attr(html, id, name = "value") {
   return new RegExp(`\\b${name}=["']([^"']*)["']`, "i").exec(tag)?.[1] ?? null;
 }
 
+/** Return whether the expected main-text container exists on a Shamela page. */
+export function hasNassContainer(html) {
+  return /<div\b[^>]*class=["'][^"']*\bnass\b[^"']*["'][^>]*>/i.test(String(html ?? ""));
+}
+
 /** Slice the inner HTML of the first `<div class="…nass…">` (balanced on nested divs). */
 function nassInner(html) {
   const open = /<div\b[^>]*class=["'][^"']*\bnass\b[^"']*["'][^>]*>/i.exec(html);

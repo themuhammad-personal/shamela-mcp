@@ -4,7 +4,7 @@
  */
 
 import { clean, absolute, links, booksFromHtml, normalizeArabic, titleScore, DEFAULT_BASE } from "./arabic.mjs";
-import { parseBookPage } from "./page.mjs";
+import { hasNassContainer, parseBookPage } from "./page.mjs";
 import { parseAuthorBiography, parseNarratorTarjama } from "./tarjama.mjs";
 
 export function createClient({ base = DEFAULT_BASE, text, maxCachedDetails = 200 }) {
@@ -16,6 +16,13 @@ export function createClient({ base = DEFAULT_BASE, text, maxCachedDetails = 200
    * Bounded Map, per isolate; titles/metadata don't change under us.
    */
   const detailsCache = new Map();
+  const detailsInflight = new Map();
+
+  const unusable = (message) => {
+    const error = new Error(`Shamela returned an unusable page: ${message}`);
+    error.code = "SHAMELA_INVALID_BODY";
+    return error;
+  };
 
   async function categories() {
     const html = await text(`${base}/`);
@@ -28,15 +35,14 @@ export function createClient({ base = DEFAULT_BASE, text, maxCachedDetails = 200
     });
   }
 
-  async function booksByCategory(categoryId, page) {
-    const cats = await categories();
-    const category = cats.find((c) => c.id === categoryId)?.name || "";
-    const all = booksFromHtml(await text(`${base}/category/${categoryId}`), category, base);
+  async function categoryPage(category, page) {
+    const categoryId = String(category.id);
+    const all = booksFromHtml(await text(`${base}/category/${categoryId}`), category.name || "", base);
     const size = 50;
     const start = (page - 1) * size;
     return {
       category_id: categoryId,
-      category,
+      category: category.name || "",
       page,
       books: all.slice(start, start + size),
       has_next: start + size < all.length,
@@ -44,19 +50,38 @@ export function createClient({ base = DEFAULT_BASE, text, maxCachedDetails = 200
     };
   }
 
+  async function booksByCategory(categoryId, page) {
+    const cats = await categories();
+    return categoryPage(cats.find((c) => c.id === String(categoryId)) ?? { id: categoryId, name: "" }, page);
+  }
+
   async function details(bookId) {
-    const cached = detailsCache.get(String(bookId));
-    if (cached) return cached;
-    const result = await fetchDetails(bookId);
-    if (detailsCache.size >= maxCachedDetails) detailsCache.delete(detailsCache.keys().next().value);
-    detailsCache.set(String(bookId), result);
-    return result;
+    const key = String(bookId);
+    if (detailsCache.has(key)) return detailsCache.get(key);
+    if (detailsInflight.has(key)) return detailsInflight.get(key);
+
+    const pending = (async () => {
+      const result = await fetchDetails(bookId);
+      if (maxCachedDetails > 0) {
+        if (detailsCache.size >= maxCachedDetails) detailsCache.delete(detailsCache.keys().next().value);
+        detailsCache.set(key, result);
+      }
+      return result;
+    })();
+    detailsInflight.set(key, pending);
+    try {
+      return await pending;
+    } finally {
+      if (detailsInflight.get(key) === pending) detailsInflight.delete(key);
+    }
   }
 
   /** Uncached details fetch — used by the cache miss path above. */
   async function fetchDetails(bookId) {
-    const html = await text(`${base}/book/${bookId}`);
+    const html = String(await text(`${base}/book/${bookId}`) ?? "");
     const title = clean(/<h1[^>]*class="[^"]*size-20[^"]*"[^>]*>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i.exec(html)?.[1] || "");
+    const hasBookShell = title || /<h1\b|<div\b[^>]*class=["'][^"']*\bnass\b|betaka-index|line-height\s*:\s*1\.8|\/author\/\d+/i.test(html);
+    if (!hasBookShell) throw unusable(`unusable book details for book ${bookId}`);
     const am = /href="[^"]*\/author\/(\d+)"[^>]*>([\s\S]*?)<\/a>/i.exec(html);
     const toc = links(html, "", new RegExp(`/book/${bookId}/\\d+`), base).filter((x) => !x.href.includes("javascript"));
     // The "بطاقة الكتاب" block. Legacy markup wraps it in an inline-styled div;
@@ -95,7 +120,8 @@ export function createClient({ base = DEFAULT_BASE, text, maxCachedDetails = 200
   }
 
   async function bookPage(bookId, pageNumber) {
-    const html = await text(`${base}/book/${bookId}/${pageNumber}`);
+    const html = String(await text(`${base}/book/${bookId}/${pageNumber}`) ?? "");
+    if (!hasNassContainer(html)) throw unusable(`missing div.nass on book ${bookId} page ${pageNumber}`);
     const d = await details(bookId);
     const p = parseBookPage(html, { bookId, pageId: pageNumber });
     return {
@@ -301,15 +327,24 @@ export function createClient({ base = DEFAULT_BASE, text, maxCachedDetails = 200
   async function allBooks(limit) {
     const cats = await categories();
     const out = [];
+    const seen = new Set();
+    const scanned = [];
     for (const c of cats) {
       if (out.length >= limit) break;
-      const x = await booksByCategory(c.id, 1);
-      out.push(...x.books);
+      const x = await categoryPage(c, 1);
+      scanned.push(c.id);
+      for (const book of x.books) {
+        if (seen.has(book.book_id)) continue;
+        seen.add(book.book_id);
+        out.push(book);
+        if (out.length >= limit) break;
+      }
     }
+    const books = out.slice(0, limit);
     return {
-      books: out.slice(0, limit),
-      count: Math.min(out.length, limit),
-      categories_scanned: cats.slice(0, Math.max(1, Math.ceil(out.length / 50))).map((c) => c.id),
+      books,
+      count: books.length,
+      categories_scanned: scanned,
     };
   }
 
