@@ -186,7 +186,7 @@ export function createServer(client = sharedClient) {
 
   tool(
     "get_book_page",
-    "বইয়ের নির্দিষ্ট Shamela page/node-এর আরবি টেক্সট — paragraphs, footnotes (hamesh) আলাদা, volume/printed_page, chapter_path, prev/next nav সহ। hadith_numbers = এই পৃষ্ঠার অনুচ্ছেদ-শুরুতে ছাপা হাদিস নম্বর (footnote বাদ); ayah_refs = পৃষ্ঠায় স্পষ্টভাবে উল্লিখিত [সূরা: আয়াত] রেফারেন্স।",
+    "বইয়ের নির্দিষ্ট Shamela page/node-এর আরবি টেক্সট — paragraphs, footnotes (hamesh) আলাদা, volume/printed_page, chapter_path, prev/next nav সহ। hadith_numbers = এই পৃষ্ঠার অনুচ্ছেদ-শুরুতে ছাপা হাদিস নম্বর (footnote বাদ); ayah_refs = পৃষ্ঠায় স্পষ্টভাবে উল্লিখিত [সূরা: আয়াত] রেফারেন্স। hadith_numbers কেবল whitelisted hadith edition বা Shamela-র hadith-number input থাকা পৃষ্ঠায় দেওয়া হয়; অন্যথায় []।",
     { book_id: idParam, page_number: pageParam },
     async (x) => {
       const p = await client.bookPage(x.book_id, x.page_number);
@@ -466,7 +466,7 @@ export function createServer(client = sharedClient) {
   // --- printed volume/page → shamela page id ---
   tool(
     "get_page_by_printed_number",
-    "ছাপা সংস্করণের (জুয/খণ্ড, পৃষ্ঠা) → Shamela page। Shamela-র /ajax/pagenum2id ব্যবহার করে; 'ترقيم الكتاب موافق للمطبوع' বইতে নির্ভরযোগ্য। না মিললে found:false।",
+    "ছাপা সংস্করণের (জুয/খণ্ড, পৃষ্ঠা) → Shamela page। Shamela-র /ajax/pagenum2id ব্যবহার করে; 'ترقيم الكتاب موافق للمطبوع' বইতে নির্ভরযোগ্য। না মিললে found:false। hadith_numbers কেবল whitelisted hadith edition বা Shamela-র hadith-number input থাকা পৃষ্ঠায় দেওয়া হয়; অন্যথায় []।",
     { book_id: idParam, volume: pageParam, printed_page: pageParam },
     async (x) => {
       const page = await client.printedPageId(x.book_id, x.volume, x.printed_page);
