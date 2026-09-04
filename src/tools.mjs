@@ -127,6 +127,10 @@ function guarded(tool, handler) {
 // The SDK validates tool arguments before invoking the callback. Override its
 // plain-text validation result so malformed calls obey the same public contract
 // as upstream/runtime failures.
+// `createToolError` is an undocumented internal of @modelcontextprotocol/sdk,
+// verified on the version pinned in package-lock.json; the schema-error test in
+// `test/auth.test.mjs` is the guard — if that test fails after an SDK upgrade,
+// this override must be revisited.
 class StructuredMcpServer extends McpServer {
   createToolError(errorMessage) {
     const message = String(errorMessage ?? "unknown error");
