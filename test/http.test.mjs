@@ -68,6 +68,21 @@ test("never runs more than maxConcurrent upstream requests at once", async () =>
   assert.equal(peak, 2);
 });
 
+test("invalid concurrency settings cannot deadlock the request queue", async () => {
+  let calls = 0;
+  const http = createHttp({ maxConcurrent: 0, fetchImpl: async () => ((calls += 1), ok("x")) });
+  assert.equal(await http.text("u"), "x");
+  assert.equal(calls, 1);
+});
+
+test("cache identity includes request headers that can change the response", async () => {
+  let calls = 0;
+  const http = createHttp({ fetchImpl: async (_, init) => ((calls += 1), ok(init.headers.Accept ?? "none")) });
+  assert.equal(await http.text("u", { headers: { Accept: "application/json" } }), "application/json");
+  assert.equal(await http.text("u", { headers: { Accept: "text/plain" } }), "text/plain");
+  assert.equal(calls, 2);
+});
+
 test("non-2xx becomes a classifiable 'Shamela returned HTTP <status>' error", async () => {
   const http = createHttp({ fetchImpl: async () => ({ ok: false, status: 429, text: async () => "" }) });
   await assert.rejects(() => http.text("u"), /HTTP 429/);
