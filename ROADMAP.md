@@ -15,7 +15,7 @@ offline after that audit.
 | Phase | Status |
 |---|---|
 | 0.1 reconstruct source | ✅ done — `src/index.mjs` + `src/lib/*.mjs` + `src/tools.mjs`; legacy 783 KB `src/worker.mjs` deleted |
-| 0.2 test harness | ✅ done — `node --test`, 143 offline tests incl. a **real shamela page fixture** (`test/fixtures/`) and hardening regressions |
+| 0.2 test harness | ✅ done — `node --test`, 147 offline tests incl. a **real shamela page fixture** (`test/fixtures/`) and hardening regressions |
 | 0.3 storage decision | ✅ static data files (`src/data/*.mjs`) + live fallback; KV not needed yet |
 | 0.4 rate limiting | ✅ upstream side (per-isolate concurrency cap 4, 20 s timeout, 15-min cache, in-flight de-dupe, hadith builder default delay 250 ms, tafsir builder default delay 400 ms) **+ optional endpoint auth**: set the `MCP_API_KEY` secret and `/mcp` requires `Authorization: Bearer` / `X-API-Key` / `?key=` (401 otherwise, constant-time compare, query key stripped before transport, OPTIONS + `/` stay open). Unset = open, as before (`src/lib/auth.mjs`, README «Protecting the endpoint») |
 | 0.5 ToS/copyright note | ✅ README «Terms, attribution & copyright»: shamela.ws is a free non-profit project (donation links recorded); this client fetches live, never mirrors; only page-number indexes are stored; every response carries edition + printed page + URL for attribution; takedown note |

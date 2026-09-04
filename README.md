@@ -85,7 +85,7 @@ scripts/
   build-hadith-index.mjs           build the static hadith index via specialnumber2id + on-page verification
   build-tafsir-index.mjs           live, delayed one-book walk → surah ranges + every ayah's first page
   check-coverage.mjs               probe for absent subcontinental works → reports/
-test/                              143 offline tests (node --test), incl. real-page fixture
+test/                              147 offline tests (node --test), incl. real-page fixture
 .github/workflows/
   deploy.yml                Node 22, npm ci, tests, dry-run, deploy on push to main
   refresh-index.yml         manual/monthly: verify whitelist, coverage report, build index → PR

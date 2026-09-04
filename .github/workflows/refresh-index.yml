@@ -70,13 +70,15 @@ jobs:
           STEP: ${{ inputs.step || '1' }}
         run: |
           set -euo pipefail
-          ARGS="--book $BOOK --from=$FROM --step=$STEP --delay=400"
-          if [ -n "$TO" ]; then ARGS="$ARGS --to=$TO"; fi
-          node scripts/build-hadith-index.mjs $ARGS
+          args=(--book "$BOOK" "--from=$FROM" "--step=$STEP" --delay=400)
+          if [ -n "$TO" ]; then args+=("--to=$TO"); fi
+          node scripts/build-hadith-index.mjs "${args[@]}"
 
       - name: Build tafsir index (surah ranges + ayah → page; ~30 min for 8473)
         if: ${{ inputs.tafsir != '' }}
-        run: node scripts/build-tafsir-index.mjs --tafsir "${{ inputs.tafsir }}" --delay=400
+        env:
+          TAFSIR: ${{ inputs.tafsir }}
+        run: node scripts/build-tafsir-index.mjs --tafsir "$TAFSIR" --delay=400
 
       - name: Health gate after generated data changes
         run: npm run verify

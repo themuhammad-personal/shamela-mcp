@@ -48,7 +48,7 @@ const numberOpt = (name, fallback, min) => {
   const raw = rawOpt(name);
   if (raw === undefined) return fallback;
   const value = Number(raw);
-  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < min) {
+  if (!raw || !/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < min) {
     console.error(`✖ --${name} must be a safe integer >= ${min}`);
     process.exit(1);
   }
@@ -60,11 +60,28 @@ const STEP = numberOpt("step", 1, 1);
 const DELAY_MS = numberOpt("delay", 250, 0);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const list = (flag) => args.flatMap((a, i) => (a === flag && /^\d+$/.test(args[i + 1] ?? "") ? [args[i + 1]] : []));
+const list = (flag) => {
+  const values = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    let value;
+    if (arg === flag) {
+      value = args[++i];
+    } else if (arg.startsWith(`${flag}=`)) {
+      value = arg.slice(flag.length + 1);
+    } else continue;
+    if (!/^\d+$/.test(value ?? "")) {
+      console.error(`✖ ${flag} requires a numeric book id`);
+      process.exit(1);
+    }
+    values.push(value);
+  }
+  return values;
+};
 
 const editions = Object.entries(canonicalBookIds?.editions ?? {}).map(([key, rec]) => ({ key, ...rec }));
 const explicitBooks = list("--book");
-if (args.includes("--tafsir")) {
+if (args.some((arg) => arg === "--tafsir" || arg.startsWith("--tafsir="))) {
   console.error("✖ Tafsir books are indexed by scripts/build-tafsir-index.mjs (npm run build:tafsir -- --tafsir <id>).");
   process.exit(1);
 }
@@ -108,6 +125,11 @@ for (const ed of hadithTargets) {
   if (!to) {
     skippedTarget = true;
     console.error(`✖ ${bookId}: no --to and no last_number in canonical data — skipping`);
+    continue;
+  }
+  if (FROM > to) {
+    skippedTarget = true;
+    console.error(`✖ ${bookId}: --from=${FROM} is after the requested end ${to}`);
     continue;
   }
   targetWithRange = true;
@@ -168,6 +190,10 @@ for (const ed of hadithTargets) {
 const total = Object.values(index.books).reduce((n, b) => n + Object.keys(b.index ?? {}).length, 0);
 console.log(`\nIndex: ${Object.keys(index.books).length} book(s), ${total} entries (${newEntries} touched this run).`);
 
+if (skippedTarget) {
+  console.error("✖ One or more targets had no valid index range; no file was written.");
+  process.exit(1);
+}
 if (!newEntries && !FORCE) {
   if (targetWithRange && !attemptedLookup && !skippedTarget) {
     console.log("✔ No new entries — existing index is already complete; nothing to write.");

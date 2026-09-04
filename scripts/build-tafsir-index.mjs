@@ -52,9 +52,9 @@ const RANGES_ONLY = args.includes("--ranges-only");
 const rawOpt = (name) => args.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
 const numberOpt = (name, fallback, min = 0) => {
   const raw = rawOpt(name);
-  if (raw === undefined || raw === "") return fallback;
+  if (raw === undefined) return fallback;
   const value = Number(raw);
-  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < min) {
+  if (!raw || !/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < min) {
     console.error(`✖ --${name} must be a safe integer >= ${min}`);
     process.exit(1);
   }
@@ -64,13 +64,30 @@ const DELAY_MS = numberOpt("delay", 400, 0);
 const FROM = numberOpt("from", 0, 0);
 const TO = numberOpt("to", 0, 0);
 const rawSurah = rawOpt("surah");
-const SURAHS = rawSurah === undefined || rawSurah === "" ? [] : rawSurah.split(",").map((s) => s.trim());
-if (SURAHS.some((s) => !/^\d+$/.test(s) || Number(s) < 1 || Number(s) > 114)) {
+const SURAHS = rawSurah === undefined ? [] : rawSurah.split(",").map((s) => s.trim());
+if (!SURAHS.length || SURAHS.some((s) => !/^\d+$/.test(s) || Number(s) < 1 || Number(s) > 114)) {
   console.error("✖ --surah must contain comma-separated surah numbers from 1 to 114");
   process.exit(1);
 }
 const SURAHS_NUMBERS = [...new Set(SURAHS.map(Number))];
-const list = (flag) => args.flatMap((a, i) => (a === flag && /^\d+$/.test(args[i + 1] ?? "") ? [args[i + 1]] : []));
+const list = (flag) => {
+  const values = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    let value;
+    if (arg === flag) {
+      value = args[++i];
+    } else if (arg.startsWith(`${flag}=`)) {
+      value = arg.slice(flag.length + 1);
+    } else continue;
+    if (!/^\d+$/.test(value ?? "")) {
+      console.error(`✖ ${flag} requires a numeric book id`);
+      process.exit(1);
+    }
+    values.push(value);
+  }
+  return values;
+};
 
 const editions = Object.entries(canonicalBookIds?.editions ?? {}).map(([key, rec]) => ({ key, ...rec }));
 const explicit = list("--tafsir");
@@ -87,6 +104,7 @@ const http = createHttp({ ttl: 0 });
 const client = createClient({ text: http.text });
 const index = { generated_at: new Date().toISOString(), books: { ...(existing?.books ?? {}) } };
 let touched = 0;
+let failedTarget = false;
 
 async function retry(fn, tries = 4) {
   let last;
@@ -138,8 +156,9 @@ for (const ed of targets) {
   const firstStart = [...starts.values()].map((v) => Number(v.page)).sort((a, b) => a - b)[0] ?? 1;
   const probe = await retry(() => client.bookPage(bookId, firstStart));
   const lastPage = Number(probe.nav?.last ?? prev.last_page ?? 0);
-  if (!lastPage) {
-    console.error("   ✖ could not determine last page — skipping");
+  if (!Number.isSafeInteger(lastPage) || lastPage < 1) {
+    failedTarget = true;
+    console.error("   ✖ could not determine a valid last page — skipping");
     continue;
   }
 
@@ -153,11 +172,17 @@ for (const ed of targets) {
       const ranges = surahRangesFromStarts(starts, lastPage);
       const sel = SURAHS_NUMBERS.map((n) => ranges[String(n)]).filter(Boolean);
       if (!sel.length) {
+        failedTarget = true;
         console.error(`   ✖ none of --surah=${SURAHS_NUMBERS.join(",")} has a known start yet`);
         continue;
       }
       walkFrom = Math.min(...sel.map((r) => Number(r.start)));
       walkTo = Math.max(...sel.map((r) => Number(r.end)));
+    }
+    if (walkFrom < 1 || walkFrom > walkTo || walkTo > lastPage) {
+      failedTarget = true;
+      console.error(`   ✖ invalid page range ${walkFrom}..${walkTo}; book pages run from 1 to ${lastPage}`);
+      continue;
     }
     console.log(`   walking pages ${walkFrom}..${walkTo} (delay ${DELAY_MS} ms)`);
 
@@ -266,9 +291,13 @@ for (const ed of targets) {
   console.log(`   ${Object.keys(surahs).length}/114 surah ranges, ${Object.keys(sortedAyahs).length} ayah entries`);
 }
 
-if (!touched && !FORCE) {
-  console.error("✖ Nothing changed — existing index NOT overwritten (use --force to write anyway).");
+if (failedTarget) {
+  console.error("✖ One or more targets failed validation; no file was written.");
   process.exit(1);
+}
+if (!touched && !FORCE) {
+  console.log("✔ Nothing changed — existing index is already current; nothing to write.");
+  process.exit(0);
 }
 if (DRY_RUN) {
   console.log(`--dry-run: would write ${OUT_PATH}`);
