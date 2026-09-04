@@ -327,6 +327,42 @@ test("get_hadith_by_number: two hadiths + one verdict on a page → grading null
   assert.ok(d.grading_note);
 });
 
+
+test("get_hadith_by_number exposes when the bounded continuation cap leaves text incomplete", async () => {
+  const srv = createServer(
+    mockClient({
+      hadithPageId: async () => "1",
+      bookPage: async (id, p) => {
+        const page = Number(p);
+        return {
+          book_id: id, page_number: String(page), chapter_path: [], url: `u/${page}`, content: `page ${page}`,
+          paragraphs: [page === 1 ? "١ - حَدَّثَنَا …" : `continuation ${page}`],
+          footnotes: [], nav: { next: String(page + 1) },
+        };
+      },
+    }),
+  );
+  const d = JSON.parse((await srv._registeredTools.get_hadith_by_number.handler({ book_id: "123", hadith_number: 1 })).content[0].text);
+  assert.equal(d.found, true);
+  assert.equal(d.continuation_complete, false);
+  assert.match(d.continuation_note, /limit|সীমা/i);
+});
+
+test("get_page_by_printed_number does not classify numbered prose from an unknown edition", async () => {
+  const srv = createServer(
+    mockClient({
+      printedPageId: async () => "10",
+      bookPage: async (id, p) => ({
+        book_id: id, page_number: String(p), paragraphs: ["١ - شاهد شعري"], footnotes: [],
+        content: "١ - شاهد شعري", chapter_path: [], nav: {}, hadith_number_hint: null,
+        volume: "1", printed_page: "5", book_title: "كتاب أدب", author: "x", url: `u/${p}`,
+      }),
+    }),
+  );
+  const d = JSON.parse((await srv._registeredTools.get_page_by_printed_number.handler({ book_id: "123", volume: "1", printed_page: "5" })).content[0].text);
+  assert.deepEqual(d.hadith_numbers, []);
+});
+
 // --- structured failures --------------------------------------------------
 
 function failingClient(error) {
