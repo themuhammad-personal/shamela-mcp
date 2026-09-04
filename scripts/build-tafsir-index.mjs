@@ -99,6 +99,14 @@ if (!targets.length) {
   process.exit(1);
 }
 
+// All arguments are validated above. --dry-run must exit here, before any
+// live network work (TOC fetch, page walk) — CI relies on this to verify
+// argument handling without ever touching shamela.ws.
+if (DRY_RUN) {
+  console.log(`--dry-run: would index ${targets.map((e) => e.book_id).join(", ")} and write ${OUT_PATH}`);
+  process.exit(0);
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const http = createHttp({ ttl: 0 });
 const client = createClient({ text: http.text });
