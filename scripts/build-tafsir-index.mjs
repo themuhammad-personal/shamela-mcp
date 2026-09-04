@@ -49,17 +49,27 @@ const args = process.argv.slice(2);
 const DRY_RUN = args.includes("--dry-run");
 const FORCE = args.includes("--force");
 const RANGES_ONLY = args.includes("--ranges-only");
-const opt = (name, fallback) => {
-  const v = args.find((a) => a.startsWith(`--${name}=`))?.split("=")[1];
-  return v === undefined || v === "" ? fallback : v;
+const rawOpt = (name) => args.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
+const numberOpt = (name, fallback, min = 0) => {
+  const raw = rawOpt(name);
+  if (raw === undefined || raw === "") return fallback;
+  const value = Number(raw);
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < min) {
+    console.error(`✖ --${name} must be a safe integer >= ${min}`);
+    process.exit(1);
+  }
+  return value;
 };
-const DELAY_MS = Number(opt("delay", 400));
-const FROM = Number(opt("from", 0));
-const TO = Number(opt("to", 0));
-const SURAHS = String(opt("surah", ""))
-  .split(",")
-  .map((s) => Number(s.trim()))
-  .filter((n) => n >= 1 && n <= 114);
+const DELAY_MS = numberOpt("delay", 400, 0);
+const FROM = numberOpt("from", 0, 0);
+const TO = numberOpt("to", 0, 0);
+const rawSurah = rawOpt("surah");
+const SURAHS = rawSurah === undefined || rawSurah === "" ? [] : rawSurah.split(",").map((s) => s.trim());
+if (SURAHS.some((s) => !/^\d+$/.test(s) || Number(s) < 1 || Number(s) > 114)) {
+  console.error("✖ --surah must contain comma-separated surah numbers from 1 to 114");
+  process.exit(1);
+}
+const SURAHS_NUMBERS = [...new Set(SURAHS.map(Number))];
 const list = (flag) => args.flatMap((a, i) => (a === flag && /^\d+$/.test(args[i + 1] ?? "") ? [args[i + 1]] : []));
 
 const editions = Object.entries(canonicalBookIds?.editions ?? {}).map(([key, rec]) => ({ key, ...rec }));
@@ -139,11 +149,11 @@ for (const ed of targets) {
   if (!RANGES_ONLY) {
     let walkFrom = FROM || firstStart;
     let walkTo = TO || lastPage;
-    if (SURAHS.length) {
+    if (SURAHS_NUMBERS.length) {
       const ranges = surahRangesFromStarts(starts, lastPage);
-      const sel = SURAHS.map((n) => ranges[String(n)]).filter(Boolean);
+      const sel = SURAHS_NUMBERS.map((n) => ranges[String(n)]).filter(Boolean);
       if (!sel.length) {
-        console.error(`   ✖ none of --surah=${SURAHS.join(",")} has a known start yet`);
+        console.error(`   ✖ none of --surah=${SURAHS_NUMBERS.join(",")} has a known start yet`);
         continue;
       }
       walkFrom = Math.min(...sel.map((r) => Number(r.start)));
@@ -243,7 +253,7 @@ for (const ed of targets) {
     }),
   );
   const prevSurahCount = Object.keys(prev.surahs ?? {}).length;
-  if (Object.keys(surahs).length !== prevSurahCount) touched += 1;
+  if (Object.keys(surahs).length !== prevSurahCount || String(lastPage) !== String(prev.last_page ?? "")) touched += 1;
   index.books[bookId] = {
     type: "tafsir",
     ...(ed.key ? { key: ed.key } : {}),
