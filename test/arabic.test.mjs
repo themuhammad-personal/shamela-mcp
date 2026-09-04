@@ -39,6 +39,8 @@ test("normalizeArabic folds hamza, alef-maqsura, ta-marbuta, harakat", () => {
   assert.equal(normalizeArabic("أبو عبدِ الله"), normalizeArabic("ابو عبد الله"));
   assert.equal(normalizeArabic("الهدى"), normalizeArabic("الهدي"));
   assert.equal(normalizeArabic("سنة"), normalizeArabic("سنّة"));
+  assert.equal(normalizeArabic("مُؤْمِنٌ وَسَائِلٌ"), "مومن وسايل");
+  assert.equal(normalizeArabic("بِسْمِ ٱللَّهِ ۝"), "بسم الله");
 });
 
 test("titleScore ranks exact > prefix > contains > word match", () => {

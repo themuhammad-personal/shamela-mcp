@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { authorize, presentedKey, safeEqual } from "../src/lib/auth.mjs";
+import { authorize, presentedKey, safeEqual, stripApiKeyFromUrl } from "../src/lib/auth.mjs";
 import worker from "../src/index.mjs";
 
 const req = (url, init = {}) => new Request(url, init);

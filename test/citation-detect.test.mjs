@@ -293,6 +293,14 @@ test("extractGradings: Abu Dawud 1726/3 «[حكم الألباني] : حسن ص�
   assert.equal(g.verdict_class, "hasan_sahih");
 });
 
+test("extractGradings finds every explicit label in one multi-entry footnote block", () => {
+  const gradings = extractGradings([
+    "(١) تخريج مختصر\n[حكم الألباني] : صحيح\n(٢) زيادة المحقق\n[حكم الألباني] : ضعيف",
+  ]);
+  assert.deepEqual(gradings.map((g) => g.verdict), ["صحيح", "ضعيف"]);
+  assert.deepEqual(gradings.map((g) => g.verdict_class), ["sahih", "daif"]);
+});
+
 test("extractGradings: Ibn Majah 1198/4 — label on its own line, verdict on the next", () => {
   const [g] = extractGradings(["[حكم الألباني]\nصحيح"]);
   assert.equal(g.verdict, "صحيح");

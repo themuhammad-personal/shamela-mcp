@@ -22,6 +22,35 @@ test("ttl=0 disables caching (used by the index builder for fresh data)", async 
   assert.equal(calls, 2);
 });
 
+test("cache identity includes method and body, so GET and POST cannot collide", async () => {
+  const seen = [];
+  const http = createHttp({
+    fetchImpl: async (url, init) => {
+      seen.push([url, init.method ?? "GET", init.body ?? null]);
+      return ok(`${init.method ?? "GET"}:${init.body ?? "none"}`);
+    },
+  });
+  assert.equal(await http.text("u", { method: "POST", body: "a" }), "POST:a");
+  assert.equal(await http.text("u", { method: "POST", body: "b" }), "POST:b");
+  assert.equal(await http.text("u"), "GET:none");
+  assert.equal(seen.length, 3);
+});
+
+test("maxCacheEntries=0 really disables storage instead of retaining one entry", async () => {
+  let calls = 0;
+  const http = createHttp({ maxCacheEntries: 0, fetchImpl: async () => ((calls += 1), ok("x")) });
+  await http.text("u");
+  await http.text("u");
+  assert.equal(calls, 2);
+});
+
+test("HTTP 200 empty or Cloudflare challenge bodies are rejected as unusable upstream responses", async () => {
+  const empty = createHttp({ fetchImpl: async () => ok("   ") });
+  await assert.rejects(() => empty.text("u"), /empty HTTP 200/);
+  const challenge = createHttp({ fetchImpl: async () => ok("<html><title>Just a moment...</title><div id=\"cf-chl-widget\"></div></html>") });
+  await assert.rejects(() => challenge.text("u"), /challenge/);
+});
+
 test("never runs more than maxConcurrent upstream requests at once", async () => {
   let active = 0;
   let peak = 0;

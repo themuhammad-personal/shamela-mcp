@@ -95,6 +95,21 @@ test("get_book_page: hadith numbers come from page markers (footnotes excluded),
   assert.equal(plain.hadith_numbers_source, "none");
 });
 
+test("get_book_page does not label a numbered paragraph as hadith without edition evidence", async () => {
+  const srv = createServer(
+    mockClient({
+      bookPage: async (id, p) => ({
+        book_id: id, page_number: String(p), paragraphs: ["١ - شاهد شعري لا حديث فيه"], footnotes: [],
+        content: "١ - شاهد شعري لا حديث فيه", chapter_path: [], nav: {}, volume: null, printed_page: null,
+        hadith_number_hint: null, book_title: "كتاب أدب", author: "x", url: `u/${p}`,
+      }),
+    }),
+  );
+  const d = JSON.parse((await srv._registeredTools.get_book_page.handler({ book_id: "123", page_number: "10" })).content[0].text);
+  assert.deepEqual(d.hadith_numbers, []);
+  assert.equal(d.hadith_numbers_source, "none");
+});
+
 test("get_hadith_by_number: live lookup → verified on page, continues across the page break", async () => {
   const d = await json("get_hadith_by_number", { book_id: "1727", hadith_number: "8" });
   assert.equal(d.found, true);

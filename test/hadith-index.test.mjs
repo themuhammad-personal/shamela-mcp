@@ -252,6 +252,15 @@ test("resolveTafsirAyahBounded: surah with no ﴿…﴾ blocks (al-Fatiha style)
   assert.ok(fetched.length <= 20);
 });
 
+test("resolveTafsirAyahBounded with zero budget is unverifiable, not surah_start", async () => {
+  const idx = { generated_at: null, books: { "777": { type: "tafsir", surahs: { "1": { start: "151", end: "160" } }, ayahs: {} } } };
+  const client = { bookPage: async () => { throw new Error("must not fetch"); } };
+  const r = await resolveTafsirAyahBounded(client, "777", 1, 5, { index: idx, maxFetches: 0 });
+  assert.equal(r.found, false);
+  assert.equal(r.reason, "ayah_not_located_within_budget");
+  assert.equal(r.pages_fetched, 0);
+});
+
 test("resolveTafsirAyahBounded refuses unknown book / surah / ayah", async () => {
   const idx = { generated_at: null, books: { "777": { type: "tafsir", surahs: { "2": { start: "1", end: "9" } }, ayahs: {} } } };
   const client = { bookPage: async () => { throw new Error("must not fetch"); } };
