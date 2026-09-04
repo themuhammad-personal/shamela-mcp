@@ -78,8 +78,11 @@ export function booksFromHtml(html, category = "", base = DEFAULT_BASE) {
 export function normalizeArabic(value) {
   return clean(value)
     .normalize("NFD")
-    .replace(/[\u064B-\u065F\u0670\u06D6-\u06ED]/g, "")
+    .replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u08D3-\u08FF]/g, "")
     .replace(/[أإآٱ]/g, "ا")
+    .replace(/ؤ/g, "و")
+    .replace(/ئ/g, "ي")
+    .replace(/ء/g, "ا")
     .replace(/ى/g, "ي")
     .replace(/ة/g, "ه")
     .replace(/ـ/g, "")
