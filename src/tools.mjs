@@ -66,6 +66,13 @@ function sanitize(message) {
 
 export function classifyError(err) {
   const message = sanitize(err?.message ?? err ?? "unknown error");
+  if (err?.code === "SHAMELA_INVALID_BODY") {
+    return {
+      kind: "upstream_invalid",
+      message,
+      hint: "shamela.ws HTTP 200 দিলেও usable book/search HTML দেয়নি (সম্ভবত empty বা bot-challenge body)। কিছুক্ষণ পরে আবার চেষ্টা করুন।",
+    };
+  }
   const httpMatch = /HTTP\s+(\d{3})/i.exec(message);
   if (httpMatch) {
     const status = Number(httpMatch[1]);

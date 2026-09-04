@@ -362,6 +362,14 @@ test("shamela HTTP 429 is classified as rate-limiting", async () => {
   assert.match(data.hint, /rate-limit/);
 });
 
+test("HTTP 200 challenge/empty bodies are classified as upstream_invalid", async () => {
+  const error = new Error("Shamela returned an unusable response: HTTP 200 challenge page");
+  error.code = "SHAMELA_INVALID_BODY";
+  const { data } = await failCall(error, "get_categories", {});
+  assert.equal(data.error, "upstream_invalid");
+  assert.equal(data.fabricated, false);
+});
+
 test("errors never leak a stack trace", async () => {
   const { out, data } = await failCall(new Error("kaboom"), "get_categories", {});
   const raw = out.content[0].text;
