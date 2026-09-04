@@ -43,21 +43,45 @@ const OUT_PATH = resolve(__dirname, "../src/data/hadith-index.mjs");
 const args = process.argv.slice(2);
 const DRY_RUN = args.includes("--dry-run");
 const FORCE = args.includes("--force");
-const opt = (name, fallback) => {
-  const v = args.find((a) => a.startsWith(`--${name}=`))?.split("=")[1];
-  return v === undefined ? fallback : Number(v);
+const rawOpt = (name) => args.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
+const numberOpt = (name, fallback, min) => {
+  const raw = rawOpt(name);
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (!raw || !/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < min) {
+    console.error(`✖ --${name} must be a safe integer >= ${min}`);
+    process.exit(1);
+  }
+  return value;
 };
-const FROM = opt("from", 1);
-const TO = opt("to", 0); // 0 → edition's last_number
-const STEP = Math.max(1, opt("step", 1));
-const DELAY_MS = opt("delay", 250);
+const FROM = numberOpt("from", 1, 1);
+const TO = numberOpt("to", 0, 0); // 0 → edition's last_number
+const STEP = numberOpt("step", 1, 1);
+const DELAY_MS = numberOpt("delay", 250, 0);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const list = (flag) => args.flatMap((a, i) => (a === flag && /^\d+$/.test(args[i + 1] ?? "") ? [args[i + 1]] : []));
+const list = (flag) => {
+  const values = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    let value;
+    if (arg === flag) {
+      value = args[++i];
+    } else if (arg.startsWith(`${flag}=`)) {
+      value = arg.slice(flag.length + 1);
+    } else continue;
+    if (!/^\d+$/.test(value ?? "")) {
+      console.error(`✖ ${flag} requires a numeric book id`);
+      process.exit(1);
+    }
+    values.push(value);
+  }
+  return values;
+};
 
 const editions = Object.entries(canonicalBookIds?.editions ?? {}).map(([key, rec]) => ({ key, ...rec }));
 const explicitBooks = list("--book");
-if (args.includes("--tafsir")) {
+if (args.some((arg) => arg === "--tafsir" || arg.startsWith("--tafsir="))) {
   console.error("✖ Tafsir books are indexed by scripts/build-tafsir-index.mjs (npm run build:tafsir -- --tafsir <id>).");
   process.exit(1);
 }
@@ -76,6 +100,9 @@ const http = createHttp({ ttl: 0 });
 const client = createClient({ text: http.text });
 const index = { generated_at: new Date().toISOString(), books: { ...(existingIndex?.books ?? {}) } };
 let newEntries = 0;
+let attemptedLookup = false;
+let skippedTarget = false;
+let targetWithRange = false;
 
 async function retry(fn, tries = 4) {
   let last;
@@ -96,9 +123,16 @@ for (const ed of hadithTargets) {
   const bookId = String(ed.book_id);
   const to = TO || ed.last_number || 0;
   if (!to) {
+    skippedTarget = true;
     console.error(`✖ ${bookId}: no --to and no last_number in canonical data — skipping`);
     continue;
   }
+  if (FROM > to) {
+    skippedTarget = true;
+    console.error(`✖ ${bookId}: --from=${FROM} is after the requested end ${to}`);
+    continue;
+  }
+  targetWithRange = true;
   console.log(`\n== ${bookId} ${ed.title ?? ""} — numbers ${FROM}..${to} step ${STEP} ==`);
   const prev = index.books[bookId]?.type === "hadith" ? index.books[bookId] : { type: "hadith", index: {}, reverse: {} };
   const forward = { ...prev.index };
@@ -108,6 +142,7 @@ for (const ed of hadithTargets) {
 
   for (let n = FROM; n <= to; n += STEP) {
     if (forward[n]?.verified) continue; // resume support
+    attemptedLookup = true;
     let page;
     try {
       page = await retry(() => client.hadithPageId(bookId, n));
@@ -155,7 +190,15 @@ for (const ed of hadithTargets) {
 const total = Object.values(index.books).reduce((n, b) => n + Object.keys(b.index ?? {}).length, 0);
 console.log(`\nIndex: ${Object.keys(index.books).length} book(s), ${total} entries (${newEntries} touched this run).`);
 
+if (skippedTarget) {
+  console.error("✖ One or more targets had no valid index range; no file was written.");
+  process.exit(1);
+}
 if (!newEntries && !FORCE) {
+  if (targetWithRange && !attemptedLookup && !skippedTarget) {
+    console.log("✔ No new entries — existing index is already complete; nothing to write.");
+    process.exit(0);
+  }
   console.error("✖ Zero new entries — existing index NOT overwritten (use --force to write anyway).");
   process.exit(1);
 }

@@ -95,6 +95,21 @@ test("get_book_page: hadith numbers come from page markers (footnotes excluded),
   assert.equal(plain.hadith_numbers_source, "none");
 });
 
+test("get_book_page does not label a numbered paragraph as hadith without edition evidence", async () => {
+  const srv = createServer(
+    mockClient({
+      bookPage: async (id, p) => ({
+        book_id: id, page_number: String(p), paragraphs: ["١ - شاهد شعري لا حديث فيه"], footnotes: [],
+        content: "١ - شاهد شعري لا حديث فيه", chapter_path: [], nav: {}, volume: null, printed_page: null,
+        hadith_number_hint: null, book_title: "كتاب أدب", author: "x", url: `u/${p}`,
+      }),
+    }),
+  );
+  const d = JSON.parse((await srv._registeredTools.get_book_page.handler({ book_id: "123", page_number: "10" })).content[0].text);
+  assert.deepEqual(d.hadith_numbers, []);
+  assert.equal(d.hadith_numbers_source, "none");
+});
+
 test("get_hadith_by_number: live lookup → verified on page, continues across the page break", async () => {
   const d = await json("get_hadith_by_number", { book_id: "1727", hadith_number: "8" });
   assert.equal(d.found, true);
@@ -166,8 +181,25 @@ test("get_tafsir_by_ayah: indexed ayah is answered from the persisted index with
   assert.equal(d.page, "721", "verified live: Baqarah 255 block starts on 8473/721");
   assert.equal(d.precision, "exact");
   assert.equal(d.source, "static_index");
+  assert.equal(d.verified_on_page, true);
   assert.deepEqual(fetched, ["8473/721"]);
   assert.equal(d.is_canonical_numbering, true);
+});
+
+test("get_tafsir_by_ayah refuses a stale static page when its ayah marker is absent", async () => {
+  const fetched = [];
+  const srv = createServer(
+    mockClient({
+      bookPage: async (id, p) => {
+        fetched.push(`${id}/${p}`);
+        return { book_id: id, page_number: String(p), paragraphs: ["شرح عام بلا رقم آية"], content: "…", footnotes: [], chapter_path: [], nav: {}, volume: "1", printed_page: "678", url: `u/${p}` };
+      },
+    }),
+  );
+  const d = JSON.parse((await srv._registeredTools.get_tafsir_by_ayah.handler({ book_id: "8473", surah: 2, ayah: 255 })).content[0].text);
+  assert.equal(d.found, false);
+  assert.equal(d.reason, "static_index_marker_not_on_page");
+  assert.deepEqual(fetched, ["8473/721"]);
 });
 
 test("get_tafsir_by_ayah: unindexed ayah → bounded bisection INSIDE the surah range (≤ 20 fetches, precision labelled)", async () => {
@@ -312,6 +344,42 @@ test("get_hadith_by_number: two hadiths + one verdict on a page → grading null
   assert.ok(d.grading_note);
 });
 
+
+test("get_hadith_by_number exposes when the bounded continuation cap leaves text incomplete", async () => {
+  const srv = createServer(
+    mockClient({
+      hadithPageId: async () => "1",
+      bookPage: async (id, p) => {
+        const page = Number(p);
+        return {
+          book_id: id, page_number: String(page), chapter_path: [], url: `u/${page}`, content: `page ${page}`,
+          paragraphs: [page === 1 ? "١ - حَدَّثَنَا …" : `continuation ${page}`],
+          footnotes: [], nav: { next: String(page + 1) },
+        };
+      },
+    }),
+  );
+  const d = JSON.parse((await srv._registeredTools.get_hadith_by_number.handler({ book_id: "123", hadith_number: 1 })).content[0].text);
+  assert.equal(d.found, true);
+  assert.equal(d.continuation_complete, false);
+  assert.match(d.continuation_note, /limit|সীমা/i);
+});
+
+test("get_page_by_printed_number does not classify numbered prose from an unknown edition", async () => {
+  const srv = createServer(
+    mockClient({
+      printedPageId: async () => "10",
+      bookPage: async (id, p) => ({
+        book_id: id, page_number: String(p), paragraphs: ["١ - شاهد شعري"], footnotes: [],
+        content: "١ - شاهد شعري", chapter_path: [], nav: {}, hadith_number_hint: null,
+        volume: "1", printed_page: "5", book_title: "كتاب أدب", author: "x", url: `u/${p}`,
+      }),
+    }),
+  );
+  const d = JSON.parse((await srv._registeredTools.get_page_by_printed_number.handler({ book_id: "123", volume: "1", printed_page: "5" })).content[0].text);
+  assert.deepEqual(d.hadith_numbers, []);
+});
+
 // --- structured failures --------------------------------------------------
 
 function failingClient(error) {
@@ -345,6 +413,14 @@ test("shamela HTTP 429 is classified as rate-limiting", async () => {
   assert.equal(data.error, "upstream_http");
   assert.equal(data.status, 429);
   assert.match(data.hint, /rate-limit/);
+});
+
+test("HTTP 200 challenge/empty bodies are classified as upstream_invalid", async () => {
+  const error = new Error("Shamela returned an unusable response: HTTP 200 challenge page");
+  error.code = "SHAMELA_INVALID_BODY";
+  const { data } = await failCall(error, "get_categories", {});
+  assert.equal(data.error, "upstream_invalid");
+  assert.equal(data.fabricated, false);
 });
 
 test("errors never leak a stack trace", async () => {

@@ -7,22 +7,24 @@ Hanafi-priority, four-madhhab comparison).
 
 ## Progress tracker
 
-Status as of **2026-09-03** (audited against live shamela.ws, not against the
-previous agent's claims).
+Status as of **2026-09-04** (audited against live shamela.ws, not against the
+previous agent's claims). Canonical-edition observations and saved fixtures were
+last live-checked on 2026-09-03; the hardening changes below were re-verified
+offline after that audit.
 
 | Phase | Status |
 |---|---|
 | 0.1 reconstruct source | ✅ done — `src/index.mjs` + `src/lib/*.mjs` + `src/tools.mjs`; legacy 783 KB `src/worker.mjs` deleted |
-| 0.2 test harness | ✅ done — `node --test`, 125 offline tests incl. a **real shamela page fixture** (`test/fixtures/`) |
+| 0.2 test harness | ✅ done — `node --test`, 147 offline tests incl. a **real shamela page fixture** (`test/fixtures/`) and hardening regressions |
 | 0.3 storage decision | ✅ static data files (`src/data/*.mjs`) + live fallback; KV not needed yet |
-| 0.4 rate limiting | ✅ upstream side (per-isolate concurrency cap 4, 20 s timeout, 15-min cache, in-flight de-dupe, builder delay ≥250 ms) **+ optional endpoint auth**: set the `MCP_API_KEY` secret and `/mcp` requires `Authorization: Bearer` / `X-API-Key` / `?key=` (401 otherwise, constant-time compare, OPTIONS + `/` stay open). Unset = open, as before (`src/lib/auth.mjs`, README «Protecting the endpoint») |
+| 0.4 rate limiting | ✅ upstream side (per-isolate concurrency cap 4, 20 s timeout, 15-min cache, in-flight de-dupe, hadith builder default delay 250 ms, tafsir builder default delay 400 ms) **+ optional endpoint auth**: set the `MCP_API_KEY` secret and `/mcp` requires `Authorization: Bearer` / `X-API-Key` / `?key=` (401 otherwise, constant-time compare, query key stripped before transport, OPTIONS + `/` stay open). Unset = open, as before (`src/lib/auth.mjs`, README «Protecting the endpoint») |
 | 0.5 ToS/copyright note | ✅ README «Terms, attribution & copyright»: shamela.ws is a free non-profit project (donation links recorded); this client fetches live, never mirrors; only page-number indexes are stored; every response carries edition + printed page + URL for attribution; takedown note |
 | 0.6 CI/CD | ✅ **fixed** — deploy was broken since PR #1 (wrangler 4.128 needs Node ≥22; workflow used Node 20). Now Node 22 + `npm ci` + tests + dry-run before deploy |
 | 1.1 canonical editions | ✅ **hand-verified whitelist** of 11 book_ids (see `src/data/canonical-book-ids.mjs`), each checked against `/ajax/specialnumber2id`. The old محقق-name heuristic was wrong on real data (false negative on Bukhari 1681) and is gone. `list_canonical_editions` tool added |
 | 1.2 coverage gap (P5) | 🟡 script exists; `reports/` not yet generated (needs a network run — see workflow) |
 | 1.3 filter docs | ✅ done |
 | 2.1 `get_hadith_by_number` | ✅ **works without any prebuilt index** — uses shamela's own `رقم الحديث` lookup (`/ajax/specialnumber2id`) then verifies the «N -» marker on the fetched page; continues across page breaks; refuses out-of-range numbers; never guesses. **Editorial grading**: explicit `[حكم الألباني] : …` / `قال الألباني: …` in the page apparatus → `grading` (all three printed shapes: Tirmidhi `: صحيح`, Abu Dawud `: حسن صحيح`, Ibn Majah label + newline); attributed only when unambiguous, else `grading: null` + `gradings_on_page`; the compiler's own «حسن صحيح» is never a grading |
-| 2.2 reverse page→hadith | ✅ `hadith_numbers` on `get_book_page` now come from **on-page markers** (footnotes excluded), static index only as fallback |
+| 2.2 reverse page→hadith | ✅ `hadith_numbers` on `get_book_page` come from **on-page markers** (footnotes excluded); unknown editions/pages stay empty unless Shamela's page carries independent hadith-number evidence. Verified static data is used only for `search_library` enrichment and direct number lookup location hints |
 | 2.3 inline hadith numbers | 🟡 `search_library` hits carry `hadith_numbers` only when the static hadith index has the page (index still empty). The tool description and a `hadith_numbers_note` in every response now say exactly that; the key is absent otherwise — no phantom field |
 | 2.4 `get_tafsir_by_ayah` | ✅ **persisted index** `src/data/tafsir-index.mjs` for **three tafsirs**: Ibn Kathir 8473, **al-Tabari 7798** (ت التركي; 114 ranges from the live TOC — heading shapes `القول في تأويل فاتحة الكتاب`, `تفسير السورة التي يذكر فيها X`, `أول تفسير …`, quoted opening words `"قد أفلح المؤمنون"`, `"حم عسق"`, `"عم يتساءلون"` …) and **al-Qurtubi 20855** (دار الكتب المصرية; 114 ranges — `سورة براءة`, `و - الذاريات`, fused `والطور`; ayahs located by its editorial `[سورة X (n): آية m]` headings since it prints no `﴿﴾` blocks; al-Baqara 1–229 already seeded from the TOC). Ibn Kathir 8473 — all **114 surah page ranges** (TOC headings in every shape 8473 uses: `فاتحة الكتاب`, `سورة X`, `"ن"`, `سأل سائل`, `السورة التي يذكر فيها الماعون`, `سورتي المعوذتين` …; al-Shu'ara → 3040 and al-Ankabut → 3168 have **no TOC entry** and are seeded from their in-text headings) + hand-verified ayah → page seeds. Unindexed ayah → bounded search **inside the surah's range only** (≤ 20 page reads), result always labelled `precision: exact / nearest_before / surah_start`. No request-time TOC walk. Full ayah map is filled offline by `scripts/build-tafsir-index.mjs` (workflow input `tafsir`) |
 | 2.5 deep-link snippets | 🟡 same dependency as 2.3 |
@@ -30,6 +32,21 @@ previous agent's claims).
 | 3.3 tarjamah | ✅ `get_narrator_biography` (`/narrator/<id>` rijal card → labelled fields, hijri years, Ibn Hajar / al-Dhahabi ranks verbatim, «الجرح والتعديل» grouped by critic with printed sources; nothing computed) + `get_author_books` now returns the author page's «تعريف بالمؤلف» entry (dates, full name, works, references, source) |
 | 3.1 / 3.2 metadata | ⏳ pending |
 | 4.x reading UX | ⏳ pending |
+
+## Hardening audit — 2026-09-04
+
+- **Audited & OK:** real-shaped Shamela page/parser fixtures, canonical-edition
+  evidence, Arabic normalization, hadith/ayah marker boundaries, Albani
+  attribution, cache/concurrency/auth paths, structured tool errors, generated
+  index guards, and CI dry-run configuration.
+- **Fixed:** shared isolate-lifetime upstream state; stale/malformed response
+  rejection; verified-page citation gates; bounded continuation metadata;
+  structured SDK validation errors; safe API-key transport handling; cache and
+  builder input validation; explicit test/health gates; and documentation drift.
+- **Proposed, not done:** a full live corpus/index refresh, durable distributed
+  rate limiting across Worker isolates, and broader reading UX remain outside
+  this pass. They need separate load, product, or infrastructure decisions and
+  must not be hidden behind a green local test run.
 
 ### Where the network-dependent scripts run
 

@@ -12,7 +12,7 @@
 
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { createServer } from "./tools.mjs";
-import { authorize, unauthorizedResponse } from "./lib/auth.mjs";
+import { authorize, stripApiKeyFromUrl, unauthorizedResponse } from "./lib/auth.mjs";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -46,7 +46,11 @@ export default {
       enableJsonResponse: true,
     });
     await server.connect(transport);
-    const res = await transport.handleRequest(request);
+    // Do not let a header-less client's API key become part of the URL seen by
+    // the MCP transport or any downstream logging/session code.
+    const safeUrl = stripApiKeyFromUrl(request.url);
+    const transportRequest = safeUrl === request.url ? request : new Request(safeUrl, request);
+    const res = await transport.handleRequest(transportRequest);
     // Mirror the permissive CORS the preflight promised on the real response.
     const headers = new Headers(res.headers);
     for (const [k, v] of Object.entries(CORS)) if (!headers.has(k)) headers.set(k, v);

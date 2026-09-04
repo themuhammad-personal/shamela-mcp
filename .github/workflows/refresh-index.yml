@@ -48,8 +48,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: 22
           cache: npm
@@ -69,20 +69,22 @@ jobs:
           TO: ${{ inputs.to }}
           STEP: ${{ inputs.step || '1' }}
         run: |
-          set -x
-          ARGS="--book $BOOK --from=$FROM --step=$STEP --delay=400"
-          if [ -n "$TO" ]; then ARGS="$ARGS --to=$TO"; fi
-          node scripts/build-hadith-index.mjs $ARGS
+          set -euo pipefail
+          args=(--book "$BOOK" "--from=$FROM" "--step=$STEP" --delay=400)
+          if [ -n "$TO" ]; then args+=("--to=$TO"); fi
+          node scripts/build-hadith-index.mjs "${args[@]}"
 
       - name: Build tafsir index (surah ranges + ayah → page; ~30 min for 8473)
         if: ${{ inputs.tafsir != '' }}
-        run: node scripts/build-tafsir-index.mjs --tafsir "${{ inputs.tafsir }}" --delay=400
+        env:
+          TAFSIR: ${{ inputs.tafsir }}
+        run: node scripts/build-tafsir-index.mjs --tafsir "$TAFSIR" --delay=400
 
-      - name: Unit tests still pass with the new data
-        run: npm test
+      - name: Health gate after generated data changes
+        run: npm run verify
 
       - name: Open pull request
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8.1.1
         with:
           branch: bot/refresh-index
           title: "chore: refresh citation index & coverage report"

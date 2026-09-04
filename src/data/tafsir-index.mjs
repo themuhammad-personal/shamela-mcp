@@ -5,7 +5,7 @@
  * GENERATED / MERGED by scripts/build-tafsir-index.mjs — do not hand-edit
  * entries. The tool layer never walks a book at request time: it answers
  * from `ayahs` in O(1), or bisects inside the surah's `surahs[n]` range
- * (≤ ~15 page fetches) and never leaves that range.
+ * (≤ 20 page fetches) and never leaves that range.
  *
  * Schema:
  *   books["<book_id>"] = {

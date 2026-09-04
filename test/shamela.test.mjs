@@ -126,6 +126,66 @@ test("bookPage reuses cached details — one details fetch per book, not per pag
   assert.equal(detailCalls, 1, "details fetched once for three page reads");
 });
 
+test("details cache de-duplicates concurrent misses", async () => {
+  let detailCalls = 0;
+  const text = async (url) => {
+    if (url === "https://shamela.ws/book/123") {
+      detailCalls += 1;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return BOOK_DETAILS;
+    }
+    throw new Error(`unexpected ${url}`);
+  };
+  const c = createClient({ text });
+  const [a, b] = await Promise.all([c.details("123"), c.details("123")]);
+  assert.equal(a.title, "صحيح البخاري");
+  assert.equal(b.title, "صحيح البخاري");
+  assert.equal(detailCalls, 1);
+});
+
+test("details rejects HTTP-200 access pages even when they contain a generic h1", async () => {
+  const c = createClient({ text: fakeText({ "https://shamela.ws/book/123": "<html><body><h1>Access denied</h1></body></html>" }) });
+  await assert.rejects(() => c.details("123"), /unusable book details/);
+});
+
+test("bookPage rejects an HTTP-200 body without the main nass container", async () => {
+  const c = createClient({
+    text: fakeText({
+      "https://shamela.ws/book/123/1": "<html><body>Access denied</body></html>",
+      "https://shamela.ws/book/123": BOOK_DETAILS,
+    }),
+  });
+  await assert.rejects(() => c.bookPage("123", "1"), /missing div\.nass/);
+});
+
+test("allBooks reuses one category listing and reports only categories actually scanned", async () => {
+  let homeCalls = 0;
+  const categoryCalls = [];
+  const home = `<a class="cat_title" href="/category/1">1. One 1</a><a class="cat_title" href="/category/2">2. Two 1</a>`;
+  const c = createClient({
+    text: async (url) => {
+      if (url === "https://shamela.ws/") {
+        homeCalls += 1;
+        return home;
+      }
+      if (url === "https://shamela.ws/category/1") {
+        categoryCalls.push("1");
+        return `<a class="book_title" href="/book/11">First</a>`;
+      }
+      if (url === "https://shamela.ws/category/2") {
+        categoryCalls.push("2");
+        return `<a class="book_title" href="/book/22">Second</a>`;
+      }
+      throw new Error(`unexpected ${url}`);
+    },
+  });
+  const r = await c.allBooks(2);
+  assert.deepEqual(r.books.map((b) => b.book_id), ["11", "22"]);
+  assert.deepEqual(r.categories_scanned, ["1", "2"]);
+  assert.equal(homeCalls, 1, "allBooks must not re-fetch the homepage for every category");
+  assert.deepEqual(categoryCalls, ["1", "2"]);
+});
+
 test("titleSearch parses JSON and ranks", async () => {
   const c = createClient({
     text: fakeText({

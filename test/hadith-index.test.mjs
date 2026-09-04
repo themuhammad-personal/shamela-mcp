@@ -18,7 +18,7 @@ const fixture = {
   books: {
     "111": {
       type: "hadith",
-      index: { "1": { page: "10" }, "8": { page: "25", note: "باب بدء الوحي" } },
+      index: { "1": { page: "10", verified: true }, "8": { page: "25", note: "باب بدء الوحي", verified: true } },
       reverse: { "10": ["1"], "25": ["8"] },
     },
     "222": { type: "tafsir", ayahs: { "2:255": { page: "40", note: "آية الكرسي" } } },
@@ -68,6 +68,13 @@ test("resolveHadith: unknown number → found:false, never fabricated", () => {
   const r = resolveHadith("111", "999", fixture);
   assert.equal(r.found, false);
   assert.equal(r.reason, "hadith_number_not_indexed");
+});
+
+test("resolveHadith rejects unverified or malformed static entries", () => {
+  const idx = { books: { "111": { type: "hadith", index: { "1": { page: "10", verified: false }, "2": { page: "not-a-page", verified: true } } } } };
+  assert.equal(resolveHadith("111", "1", idx).reason, "hadith_number_not_verified");
+  assert.equal(resolveHadith("111", "2", idx).reason, "hadith_index_entry_invalid");
+  assert.equal(resolveHadith("111", "0", idx).reason, "invalid_hadith_number");
 });
 
 test("resolveHadith: unindexed book → found:false", () => {
@@ -250,6 +257,15 @@ test("resolveTafsirAyahBounded: surah with no ﴿…﴾ blocks (al-Fatiha style)
   assert.ok(r.note);
   assert.ok(fetched.every((p) => p >= 151 && p <= 160));
   assert.ok(fetched.length <= 20);
+});
+
+test("resolveTafsirAyahBounded with zero budget is unverifiable, not surah_start", async () => {
+  const idx = { generated_at: null, books: { "777": { type: "tafsir", surahs: { "1": { start: "151", end: "160" } }, ayahs: {} } } };
+  const client = { bookPage: async () => { throw new Error("must not fetch"); } };
+  const r = await resolveTafsirAyahBounded(client, "777", 1, 5, { index: idx, maxFetches: 0 });
+  assert.equal(r.found, false);
+  assert.equal(r.reason, "ayah_not_located_within_budget");
+  assert.equal(r.pages_fetched, 0);
 });
 
 test("resolveTafsirAyahBounded refuses unknown book / surah / ayah", async () => {

@@ -143,7 +143,7 @@ export function extractHadith(paragraphs, hadithNumber) {
  * («صحيح دون قوله …» is kept whole). `verdict_class` folds it to one of
  * sahih | hasan_sahih | hasan | daif | mawdu | other for filtering.
  */
-const ALBANI_LABEL_RE = /\[\s*حكم\s+الألباني\s*\]\s*[:：]?\s*([^\n]*)/u;
+const ALBANI_LABEL_RE = /\[\s*حكم\s+الألباني\s*\][\t ]*(?::|：)?[\t ]*/gu;
 const ALBANI_SAID_RE = /(?:^|\n|[.،;؛]\s*)قال\s+(?:الشيخ\s+)?(?:محمد\s+ناصر\s+الدين\s+)?الألباني\s*(?:رحمه الله\s*)?[:：]\s*([^\n]+)/u;
 
 function classifyVerdict(v) {
@@ -154,7 +154,8 @@ function classifyVerdict(v) {
   if (/^(ضعيف|منكر|شاذ|باطل|لا اصل له|ليس بصحيح|مضطرب|معلول|معل\b)/.test(t)) return "daif";
   if (/^حسن/.test(t)) return "hasan";
   if (/^صحيح/.test(t)) return "sahih";
-  if (/^(اسناده|سنده)\s+(صحيح|حسن|ضعيف)/.test(t)) return RegExp.$2 === "صحيح" ? "sahih" : RegExp.$2 === "حسن" ? "hasan" : "daif";
+  const isnad = /^(اسناده|سنده)\s+(صحيح|حسن|ضعيف)/.exec(t);
+  if (isnad) return isnad[2] === "صحيح" ? "sahih" : isnad[2] === "حسن" ? "hasan" : "daif";
   return "other";
 }
 
@@ -170,18 +171,32 @@ export function extractGradings(footnotes, paragraphs = []) {
   const scan = (text, where, index, allowSaid) => {
     const src = String(text ?? "");
     if (!src) return;
-    // A footnote block may hold several «(١) … (٢) …» entries on separate lines;
-    // handle each line so the verdict never swallows the next entry.
-    const m = ALBANI_LABEL_RE.exec(src);
-    if (m) {
-      let verdict = m[1].trim();
-      if (!verdict) {
-        // «[حكم الألباني]» alone on its line → the verdict is the next non-empty line (Ibn Majah 1198).
-        const after = src.slice(m.index + m[0].length).split("\n").map((l) => l.trim()).find(Boolean) ?? "";
-        verdict = after;
-      }
-      verdict = verdict.replace(/^[\s:：\-–]+/, "").replace(new RegExp(`\\s*\\(${DIGITS}+\\)\\s*$`), "").trim();
-      if (verdict) out.push({ grader: "الألباني", verdict, verdict_class: classifyVerdict(verdict), raw: src.trim(), where, index });
+
+    // A footnote block can contain several entries. Find every label first and
+    // bound each verdict by the same line (or the next label), so one verdict
+    // cannot swallow the next entry in the block.
+    const labels = [];
+    ALBANI_LABEL_RE.lastIndex = 0;
+    let label;
+    while ((label = ALBANI_LABEL_RE.exec(src))) labels.push(label);
+    if (labels.length) {
+      labels.forEach((m, labelIndex) => {
+        const nextLabel = labels[labelIndex + 1]?.index ?? src.length;
+        const lineEnd = src.indexOf("\n", m.index);
+        const sameLineEnd = Math.min(nextLabel, lineEnd < 0 ? src.length : lineEnd);
+        let verdict = src.slice(m.index + m[0].length, sameLineEnd).trim();
+        if (!verdict) {
+          // «[حكم الألباني]» alone on its line → the verdict is the next
+          // non-empty line (Ibn Majah 1198), but never a later label's text.
+          verdict = src
+            .slice(m.index + m[0].length, nextLabel)
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .find(Boolean) ?? "";
+        }
+        verdict = verdict.replace(/^[\s:：\-–]+/, "").replace(new RegExp(`\\s*\\(${DIGITS}+\\)\\s*$`), "").trim();
+        if (verdict) out.push({ grader: "الألباني", verdict, verdict_class: classifyVerdict(verdict), raw: src.trim(), where, index });
+      });
       return;
     }
     if (!allowSaid) return;

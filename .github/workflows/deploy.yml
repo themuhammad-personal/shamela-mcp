@@ -3,36 +3,50 @@ name: Deploy to Cloudflare Workers
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
   group: deploy-production
   cancel-in-progress: false
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+permissions:
+  contents: read
 
-      # wrangler >= 4.90 requires Node 22+. Keep in sync with package.json "engines".
-      - uses: actions/setup-node@v4
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: 22
           cache: npm
-
       - name: Install (lockfile)
         run: npm ci --no-audit --no-fund
+      - name: Health gate
+        run: npm run verify
 
-      - name: Unit tests (offline)
-        run: npm test
-
-      - name: Dry-run build
-        run: npx wrangler deploy --dry-run --outdir /tmp/wrangler-dry-run
-
+  deploy:
+    name: Deploy
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install (lockfile)
+        run: npm ci --no-audit --no-fund
       - name: Deploy
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4.0.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          # Use the wrangler already installed by `npm ci` (version pinned by lockfile).
+          # Use the Wrangler installed by npm ci (version pinned by the lockfile).
           packageManager: npm

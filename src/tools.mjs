@@ -24,15 +24,23 @@ import {
   hadithNumbersOnPage,
   indexStatus,
 } from "./lib/hadith-index.mjs";
-import { detectHadithNumbers, detectAyahs, gradingAcrossPages } from "./lib/citation-detect.mjs";
+import { detectHadithNumbers, extractHadith, detectAyahs, detectQuranBracketAyahs, gradingAcrossPages } from "./lib/citation-detect.mjs";
 import { normalizeArabic } from "./lib/arabic.mjs";
 
 export const SERVER_VERSION = "2.4.0";
 
 const response = (x) => ({ content: [{ type: "text", text: JSON.stringify(x, null, 2) }] });
 
-const idParam = z.string().regex(/^\d+$/);
-const intId = z.coerce.string().regex(/^\d+$/);
+// Keep the upstream cache, concurrency gate, in-flight de-duplication and
+// details cache alive for the lifetime of a Worker isolate. A new MCP server
+// and transport is still created per stateless HTTP request, but the expensive
+// upstream state must not be recreated with them.
+const sharedHttp = createHttp();
+const sharedClient = createClient({ text: sharedHttp.text });
+
+const idParam = z.string().regex(/^[1-9]\d{0,11}$/);
+const intId = z.coerce.string().regex(/^[1-9]\d{0,11}$/);
+const pageParam = z.coerce.string().regex(/^[1-9]\d{0,11}$/);
 
 /**
  * Turn a thrown error into something a caller can act on.
@@ -59,6 +67,13 @@ function sanitize(message) {
 
 export function classifyError(err) {
   const message = sanitize(err?.message ?? err ?? "unknown error");
+  if (err?.code === "SHAMELA_INVALID_BODY") {
+    return {
+      kind: "upstream_invalid",
+      message,
+      hint: "shamela.ws HTTP 200 দিলেও usable book/search HTML দেয়নি (সম্ভবত empty বা bot-challenge body)। কিছুক্ষণ পরে আবার চেষ্টা করুন।",
+    };
+  }
   const httpMatch = /HTTP\s+(\d{3})/i.exec(message);
   if (httpMatch) {
     const status = Number(httpMatch[1]);
@@ -109,11 +124,51 @@ function guarded(tool, handler) {
   };
 }
 
-export function createServer(client = createClient({ text: createHttp().text })) {
-  const s = new McpServer({ name: "shamela-library", version: SERVER_VERSION });
+// The SDK validates tool arguments before invoking the callback. Override its
+// plain-text validation result so malformed calls obey the same public contract
+// as upstream/runtime failures.
+// `createToolError` is an undocumented internal of @modelcontextprotocol/sdk,
+// verified on the version pinned in package-lock.json; the schema-error test in
+// `test/auth.test.mjs` is the guard — if that test fails after an SDK upgrade,
+// this override must be revisited.
+class StructuredMcpServer extends McpServer {
+  createToolError(errorMessage) {
+    const message = String(errorMessage ?? "unknown error");
+    const validation = /Input validation error: Invalid arguments for tool ([A-Za-z0-9_-]+):\s*([\s\S]*)/i.exec(message);
+    const tool = validation?.[1] ?? /tool\s+([A-Za-z0-9_-]+)/i.exec(message)?.[1] ?? "unknown";
+    const info = validation
+      ? { kind: "bad_request", message: sanitize(validation[2] || message), hint: "tool-এর arguments সঠিক নয় — schema অনুযায়ী পাঠান।" }
+      : classifyError(message);
+    return {
+      ...response({
+        ok: false,
+        tool,
+        error: info.kind,
+        detail: info.message,
+        ...(info.status ? { status: info.status } : {}),
+        hint: info.hint,
+        fabricated: false,
+        note: "কোনো তথ্য অনুমান করা হয়নি — source থেকে কিছুই ফেরত দেওয়া হয়নি।",
+      }),
+      isError: true,
+    };
+  }
+}
+
+export function createServer(client = sharedClient) {
+  const s = new StructuredMcpServer({ name: "shamela-library", version: SERVER_VERSION });
   // `registerTool` is the non-deprecated API in SDK ≥1.30 (`tool()` is @deprecated).
   const tool = (name, description, schema, handler) =>
     s.registerTool(name, { description, inputSchema: schema }, guarded(name, handler));
+
+  // `N -` is also used for numbered poetry/prose. Treat it as a hadith marker
+  // only when the edition is whitelisted as hadith or the page itself carries
+  // Shamela's hadith-number input as independent evidence.
+  const hadithNumbersWithEvidence = (bookId, page) => {
+    const knownHadithEdition = canonicalRecord(bookId)?.type === "hadith";
+    const pageIdentifiesHadith = /^\d+$/.test(String(page.hadith_number_hint ?? ""));
+    return knownHadithEdition || pageIdentifiesHadith ? detectHadithNumbers(page.paragraphs) : [];
+  };
 
   tool("get_categories", "Shamela-র সম্পূর্ণ category তালিকা (id, নাম, বই সংখ্যা)।", {}, async () =>
     response({ items: await client.categories() }),
@@ -135,16 +190,15 @@ export function createServer(client = createClient({ text: createHttp().text }))
 
   tool(
     "get_book_page",
-    "বইয়ের নির্দিষ্ট Shamela page/node-এর আরবি টেক্সট — paragraphs, footnotes (hamesh) আলাদা, volume/printed_page, chapter_path, prev/next nav সহ। hadith_numbers = এই পৃষ্ঠার অনুচ্ছেদ-শুরুতে ছাপা হাদিস নম্বর (footnote বাদ); ayah_refs = পৃষ্ঠায় স্পষ্টভাবে উল্লিখিত [সূরা: আয়াত] রেফারেন্স।",
-    { book_id: idParam, page_number: z.coerce.string().regex(/^\d+$/) },
+    "বইয়ের নির্দিষ্ট Shamela page/node-এর আরবি টেক্সট — paragraphs, footnotes (hamesh) আলাদা, volume/printed_page, chapter_path, prev/next nav সহ। hadith_numbers = এই পৃষ্ঠার অনুচ্ছেদ-শুরুতে ছাপা হাদিস নম্বর (footnote বাদ); ayah_refs = পৃষ্ঠায় স্পষ্টভাবে উল্লিখিত [সূরা: আয়াত] রেফারেন্স। hadith_numbers কেবল whitelisted hadith edition বা Shamela-র hadith-number input থাকা পৃষ্ঠায় দেওয়া হয়; অন্যথায় []।",
+    { book_id: idParam, page_number: pageParam },
     async (x) => {
       const p = await client.bookPage(x.book_id, x.page_number);
-      const onPage = detectHadithNumbers(p.paragraphs);
-      const indexed = hadithNumbersOnPage(x.book_id, x.page_number);
+      const onPage = hadithNumbersWithEvidence(x.book_id, p);
       return response({
         ...p,
-        hadith_numbers: onPage.length ? onPage : indexed,
-        hadith_numbers_source: onPage.length ? "page_markers" : indexed.length ? "static_index" : "none",
+        hadith_numbers: onPage,
+        hadith_numbers_source: onPage.length ? "page_markers" : "none",
         ayah_refs: detectAyahs(p.paragraphs),
         ...canonicalFields({ book_id: x.book_id, title: p.book_title }),
       });
@@ -169,7 +223,7 @@ export function createServer(client = createClient({ text: createHttp().text }))
       query: z.string().min(1).max(250),
       match_mode: z.enum(["any_words", "all_words", "exact_phrase"]).default("any_words"),
       exclude_words: z.array(z.string().min(1).max(80)).max(10).optional(),
-      categories: z.array(z.string().regex(/^\d+$/)).max(10).optional(),
+      categories: z.array(z.string().regex(/^[1-9]\d{0,11}$/)).max(10).optional(),
       century: z.array(z.string().regex(/^-?\d+$/)).max(10).optional(),
       page: z.number().int().min(1).max(500).default(1),
     },
@@ -237,9 +291,41 @@ export function createServer(client = createClient({ text: createHttp().text }))
       if (cached.found) {
         const live = await resolveHadithLive(client, x.book_id, x.hadith_number).catch(() => null);
         if (live?.found) return response(formatHadith(live, canon));
-        // fall back to the indexed page even if live verification was unavailable
-        const page = await client.bookPage(cached.book_id, cached.page);
-        return response({ ...formatHadith({ ...cached, text: page.content, page_data: page, spans_pages: [cached.page] }, canon), verified_on_page: false });
+
+        // A static page is only a location hint. Even when live verification is
+        // unavailable, the requested marker must be present in the fetched page
+        // before this tool can return found:true.
+        const page = live?.page_data ?? (await client.bookPage(cached.book_id, cached.page));
+        const hit = extractHadith(page.paragraphs, x.hadith_number);
+        if (!hit) {
+          return response({
+            found: false,
+            reason: "static_index_marker_not_on_page",
+            book_id: x.book_id,
+            hadith_number: x.hadith_number,
+            page: cached.page,
+            ...canon,
+            note: "static সূচি এই পৃষ্ঠাটি দেখালেও বর্তমান পৃষ্ঠায় অনুচ্ছেদ-শুরুতে চাওয়া নম্বরটি নেই; stale index বা edition পরিবর্তন হতে পারে। কোনো matn অনুমান করা হয়নি।",
+          });
+        }
+        const pageNumbers = detectHadithNumbers(page.paragraphs);
+        const complete = !hit.ends_at_page_end || !page.nav?.next;
+        return response(
+          formatHadith(
+            {
+              ...cached,
+              text: hit.text,
+              page_data: page,
+              spans_pages: [cached.page],
+              numbers_on_page: pageNumbers,
+              routes_on_page: hit.routes_on_page,
+              verified_on_page: true,
+              continuation_complete: complete,
+              ...(complete ? {} : { continuation_note: "static index fallback returned the verified page only; the hadith continues beyond the bounded fallback page." }),
+            },
+            canon,
+          ),
+        );
       }
       const live = await resolveHadithLive(client, x.book_id, x.hadith_number);
       if (!live.found) {
@@ -292,7 +378,9 @@ export function createServer(client = createClient({ text: createHttp().text }))
       gradings_on_page: g.gradings_on_page.length ? g.gradings_on_page : undefined,
       grading_note: g.grading_note,
       source: r.source,
-      verified_on_page: r.source !== "static_index",
+      verified_on_page: r.verified_on_page ?? r.source !== "static_index",
+      continuation_complete: r.continuation_complete ?? true,
+      ...(r.continuation_note ? { continuation_note: r.continuation_note } : {}),
       ...canon,
       citation: {
         book_id: r.book_id,
@@ -327,6 +415,24 @@ export function createServer(client = createClient({ text: createHttp().text }))
               : "get_book_details দিয়ে TOC দেখে get_book_page ব্যবহার করুন।",
         });
       const page = await client.bookPage(res.book_id, res.page);
+      const markedAyahs = detectQuranBracketAyahs(page.paragraphs ?? [], res.surah);
+      // The persisted map is a location hint, not proof. Re-check exact answers
+      // against the page currently served so a stale map cannot fabricate a
+      // citation after Shamela changes an edition or page id.
+      if (res.precision === "exact" && !markedAyahs.includes(Number(res.ayah))) {
+        return response({
+          found: false,
+          reason: "static_index_marker_not_on_page",
+          book_id: res.book_id,
+          surah: res.surah,
+          ayah: res.ayah,
+          page: res.page,
+          source: res.source,
+          index_status: indexStatus(),
+          ...canonicalFields({ book_id: res.book_id }),
+          note: "তাফসির সূচি এই পৃষ্ঠাটি দেখালেও বর্তমান পৃষ্ঠায় চাওয়া আয়াতের marker নেই; stale index বা edition পরিবর্তন হতে পারে। কোনো passage অনুমান করা হয়নি।",
+        });
+      }
       return response({
         found: true,
         book_id: res.book_id,
@@ -335,10 +441,11 @@ export function createServer(client = createClient({ text: createHttp().text }))
         page: res.page,
         precision: res.precision,
         source: res.source,
+        verified_on_page: res.precision === "exact" && markedAyahs.includes(Number(res.ayah)),
         note: res.note,
         surah_range: res.surah_range,
         pages_fetched: res.pages_fetched,
-        ayahs_marked_on_page: res.ayahs_marked_on_page,
+        ayahs_marked_on_page: res.ayahs_marked_on_page ?? markedAyahs,
         book_title: page.book_title,
         volume: page.volume,
         printed_page: page.printed_page,
@@ -363,13 +470,14 @@ export function createServer(client = createClient({ text: createHttp().text }))
   // --- printed volume/page → shamela page id ---
   tool(
     "get_page_by_printed_number",
-    "ছাপা সংস্করণের (জুয/খণ্ড, পৃষ্ঠা) → Shamela page। Shamela-র /ajax/pagenum2id ব্যবহার করে; 'ترقيم الكتاب موافق للمطبوع' বইতে নির্ভরযোগ্য। না মিললে found:false।",
-    { book_id: idParam, volume: z.coerce.string().regex(/^\d+$/), printed_page: z.coerce.string().regex(/^\d+$/) },
+    "ছাপা সংস্করণের (জুয/খণ্ড, পৃষ্ঠা) → Shamela page। Shamela-র /ajax/pagenum2id ব্যবহার করে; 'ترقيم الكتاب موافق للمطبوع' বইতে নির্ভরযোগ্য। না মিললে found:false। hadith_numbers কেবল whitelisted hadith edition বা Shamela-র hadith-number input থাকা পৃষ্ঠায় দেওয়া হয়; অন্যথায় []।",
+    { book_id: idParam, volume: pageParam, printed_page: pageParam },
     async (x) => {
       const page = await client.printedPageId(x.book_id, x.volume, x.printed_page);
       if (!page) return response({ found: false, reason: "printed_page_not_found", ...x });
       const p = await client.bookPage(x.book_id, page);
-      return response({ found: true, ...p, hadith_numbers: detectHadithNumbers(p.paragraphs) });
+      const numbers = hadithNumbersWithEvidence(x.book_id, p);
+      return response({ found: true, ...p, hadith_numbers: numbers, hadith_numbers_source: numbers.length ? "page_markers" : "none" });
     },
   );
 
