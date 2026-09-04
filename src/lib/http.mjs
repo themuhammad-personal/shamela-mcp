@@ -11,6 +11,23 @@ const DEFAULT_HEADERS = {
   "Accept-Language": "ar,en;q=0.8",
 };
 
+function unusableBody(reason) {
+  const error = new Error(`Shamela returned an unusable response: ${reason}`);
+  error.code = "SHAMELA_INVALID_BODY";
+  return error;
+}
+
+function looksLikeChallenge(body) {
+  const sample = String(body ?? "").slice(0, 20_000);
+  return /just a moment|checking your browser|enable javascript and cookies|challenge-platform|cf-chl-|attention required/i.test(sample);
+}
+
+function requestKey(url, init = {}) {
+  const method = String(init.method ?? "GET").toUpperCase();
+  const body = init.body == null ? null : typeof init.body === "string" ? init.body : String(init.body);
+  return JSON.stringify([method, String(url), body]);
+}
+
 export function createHttp({
   fetchImpl = fetch,
   ttl = 15 * 60_000,
@@ -50,14 +67,17 @@ export function createHttp({
         ...(ctrl ? { signal: ctrl.signal } : {}),
       });
       if (!res.ok) throw new Error(`Shamela returned HTTP ${res.status}`);
-      return await res.text();
+      const body = await res.text();
+      if (!String(body).trim()) throw unusableBody("empty HTTP 200 body");
+      if (looksLikeChallenge(body)) throw unusableBody("HTTP 200 challenge page");
+      return body;
     } finally {
       if (timer) clearTimeout(timer);
     }
   }
 
   async function text(url, init = {}) {
-    const key = init.method === "POST" ? `${url}|${String(init.body)}` : url;
+    const key = requestKey(url, init);
     const old = cache.get(key);
     if (old && ttl > 0 && Date.now() - old.at < ttl) return old.text;
     if (inflight.has(key)) return inflight.get(key); // de-dupe concurrent identical requests
@@ -66,7 +86,7 @@ export function createHttp({
       await acquire();
       try {
         const value = await doFetch(url, init);
-        if (ttl > 0) {
+        if (ttl > 0 && maxCacheEntries > 0) {
           if (cache.size >= maxCacheEntries) cache.delete(cache.keys().next().value);
           cache.set(key, { text: value, at: Date.now() });
         }
