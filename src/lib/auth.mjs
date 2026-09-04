@@ -21,14 +21,25 @@
 
 const enc = new TextEncoder();
 
-/** Constant-time string equality (length leak is acceptable; content is not). */
+/** Compare UTF-8 bytes without returning early on a length mismatch. */
 export function safeEqual(a, b) {
   const x = enc.encode(String(a ?? ""));
   const y = enc.encode(String(b ?? ""));
-  if (x.length !== y.length) return false;
-  let diff = 0;
-  for (let i = 0; i < x.length; i += 1) diff |= x[i] ^ y[i];
+  const length = Math.max(x.length, y.length);
+  let diff = x.length === y.length ? 0 : 1;
+  for (let i = 0; i < length; i += 1) diff |= (x[i] ?? 0) ^ (y[i] ?? 0);
   return diff === 0;
+}
+
+/** Remove the credential query parameter before a request reaches the MCP transport. */
+export function stripApiKeyFromUrl(value) {
+  try {
+    const url = new URL(String(value));
+    url.searchParams.delete("key");
+    return url.toString();
+  } catch {
+    return String(value);
+  }
 }
 
 /** The key a request presents, or null. Order: Bearer → X-API-Key → ?key=. */
