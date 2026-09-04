@@ -18,7 +18,7 @@ const fixture = {
   books: {
     "111": {
       type: "hadith",
-      index: { "1": { page: "10" }, "8": { page: "25", note: "باب بدء الوحي" } },
+      index: { "1": { page: "10", verified: true }, "8": { page: "25", note: "باب بدء الوحي", verified: true } },
       reverse: { "10": ["1"], "25": ["8"] },
     },
     "222": { type: "tafsir", ayahs: { "2:255": { page: "40", note: "آية الكرسي" } } },

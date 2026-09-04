@@ -122,7 +122,16 @@ export function createServer(client = sharedClient) {
   const tool = (name, description, schema, handler) =>
     s.registerTool(name, { description, inputSchema: schema }, guarded(name, handler));
 
-  tool("get_categories", "Shamela-র সম্পূর্ণ category তালিকা (id, নাম, বই সংখ্যা)।", {}, async () =>
+  // `N -` is also used for numbered poetry/prose. Treat it as a hadith marker
+  // only when the edition is whitelisted as hadith or the page itself carries
+  // Shamela's hadith-number input as independent evidence.
+  const hadithNumbersWithEvidence = (bookId, page) => {
+    const knownHadithEdition = canonicalRecord(bookId)?.type === "hadith";
+    const pageIdentifiesHadith = /^\d+$/.test(String(page.hadith_number_hint ?? ""));
+    return knownHadithEdition || pageIdentifiesHadith ? detectHadithNumbers(page.paragraphs) : [];
+  };
+
+  tool("get_categories",  "Shamela-র সম্পূর্ণ category তালিকা (id, নাম, বই সংখ্যা)।", {}, async () =>
     response({ items: await client.categories() }),
   );
 
@@ -146,12 +155,11 @@ export function createServer(client = sharedClient) {
     { book_id: idParam, page_number: z.coerce.string().regex(/^\d+$/) },
     async (x) => {
       const p = await client.bookPage(x.book_id, x.page_number);
-      const onPage = detectHadithNumbers(p.paragraphs);
-      const indexed = hadithNumbersOnPage(x.book_id, x.page_number);
+      const onPage = hadithNumbersWithEvidence(x.book_id, p);
       return response({
         ...p,
-        hadith_numbers: onPage.length ? onPage : indexed,
-        hadith_numbers_source: onPage.length ? "page_markers" : indexed.length ? "static_index" : "none",
+        hadith_numbers: onPage,
+        hadith_numbers_source: onPage.length ? "page_markers" : "none",
         ayah_refs: detectAyahs(p.paragraphs),
         ...canonicalFields({ book_id: x.book_id, title: p.book_title }),
       });
@@ -244,9 +252,40 @@ export function createServer(client = sharedClient) {
       if (cached.found) {
         const live = await resolveHadithLive(client, x.book_id, x.hadith_number).catch(() => null);
         if (live?.found) return response(formatHadith(live, canon));
-        // fall back to the indexed page even if live verification was unavailable
-        const page = await client.bookPage(cached.book_id, cached.page);
-        return response({ ...formatHadith({ ...cached, text: page.content, page_data: page, spans_pages: [cached.page] }, canon), verified_on_page: false });
+
+        // A static page is only a location hint. Even when live verification is
+        // unavailable, the requested marker must be present in the fetched page
+        // before this tool can return found:true.
+        const page = live?.page_data ?? (await client.bookPage(cached.book_id, cached.page));
+        const hit = extractHadith(page.paragraphs, x.hadith_number);
+        if (!hit) {
+          return response({
+            found: false,
+            reason: "static_index_marker_not_on_page",
+            book_id: x.book_id,
+            hadith_number: x.hadith_number,
+            page: cached.page,
+            ...canon,
+            note: "static সূচি এই পৃষ্ঠাটি দেখালেও বর্তমান পৃষ্ঠায় অনুচ্ছেদ-শুরুতে চাওয়া নম্বরটি নেই; stale index বা edition পরিবর্তন হতে পারে। কোনো matn অনুমান করা হয়নি।",
+          });
+        }
+        const pageNumbers = detectHadithNumbers(page.paragraphs);
+        const complete = !hit.ends_at_page_end || !page.nav?.next;
+        return response(
+          formatHadith(
+            {
+              ...cached,
+              text: hit.text,
+              page_data: page,
+              spans_pages: [cached.page],
+              numbers_on_page: pageNumbers,
+              routes_on_page: hit.routes_on_page,
+              continuation_complete: complete,
+              ...(complete ? {} : { continuation_note: "static index fallback returned the verified page only; the hadith continues beyond the bounded fallback page." }),
+            },
+            canon,
+          ),
+        );
       }
       const live = await resolveHadithLive(client, x.book_id, x.hadith_number);
       if (!live.found) {
@@ -299,7 +338,9 @@ export function createServer(client = sharedClient) {
       gradings_on_page: g.gradings_on_page.length ? g.gradings_on_page : undefined,
       grading_note: g.grading_note,
       source: r.source,
-      verified_on_page: r.source !== "static_index",
+      verified_on_page: r.verified_on_page ?? r.source !== "static_index",
+      continuation_complete: r.continuation_complete ?? true,
+      ...(r.continuation_note ? { continuation_note: r.continuation_note } : {}),
       ...canon,
       citation: {
         book_id: r.book_id,
@@ -376,7 +417,8 @@ export function createServer(client = sharedClient) {
       const page = await client.printedPageId(x.book_id, x.volume, x.printed_page);
       if (!page) return response({ found: false, reason: "printed_page_not_found", ...x });
       const p = await client.bookPage(x.book_id, page);
-      return response({ found: true, ...p, hadith_numbers: detectHadithNumbers(p.paragraphs) });
+      const numbers = hadithNumbersWithEvidence(x.book_id, p);
+      return response({ found: true, ...p, hadith_numbers: numbers, hadith_numbers_source: numbers.length ? "page_markers" : "none" });
     },
   );
 
