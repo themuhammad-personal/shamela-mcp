@@ -125,6 +125,8 @@ test("get_hadith_by_number: live lookup → verified on page, continues across t
   assert.equal(d.is_canonical_numbering, true);
   assert.equal(d.citation.numbering, "ترقيم محمد فؤاد عبد الباقي");
   assert.equal(d.citation.printed_page, "36");
+  assert.deepEqual(d.verification, { status: "verified", evidence: "page_marker" });
+  assert.deepEqual(d.citation.verification, d.verification);
 });
 
 test("get_hadith_by_number: Muwatta ambiguity and resolved kitab are unavoidable at top level", async () => {
@@ -141,6 +143,22 @@ test("get_hadith_by_number: Muwatta ambiguity and resolved kitab are unavoidable
   assert.equal(d.numbering_ambiguous, true);
   assert.equal(d.resolved_kitab, "كتاب أسماء النبي صلى الله عليه وسلم");
   assert.match(d.warning, /প্রতি কিতাবে/);
+  assert.deepEqual(d.verification, { status: "verified", evidence: "page_marker+kitab_resolved" });
+});
+
+test("get_hadith_by_number: Muwatta ambiguity WITHOUT a resolvable kitab is reported ambiguous, not verified", async () => {
+  const srv = createServer(mockClient({
+    hadithPageId: async () => "2643",
+    bookPage: async () => ({
+      book_id: "1699", page_number: "2643", paragraphs: ["١ - حَدَّثَنِي مَالِكٌ …"], narrator_links: [], footnotes: [],
+      nav: {}, volume: "2", printed_page: "999", chapter_path: [], // no كتاب entry in chapter_path
+      book_title: "موطأ مالك - رواية يحيى - ت عبد الباقي", author: "مالك", url: "https://shamela.ws/book/1699/2643",
+    }),
+  }));
+  const d = JSON.parse((await srv._registeredTools.get_hadith_by_number.handler({ book_id: "1699", hadith_number: "1" })).content[0].text);
+  assert.equal(d.found, true);
+  assert.equal(d.resolved_kitab, null);
+  assert.deepEqual(d.verification, { status: "ambiguous", evidence: "kitab_unresolved" });
 });
 
 test("get_hadith_by_number: globally numbered books are not marked ambiguous", async () => {
@@ -157,6 +175,7 @@ test("get_hadith_by_number: out-of-range number is refused BEFORE hitting the ne
   assert.equal(d.reason, "out_of_range");
   assert.equal(d.last_number, 3033);
   assert.equal(called, false);
+  assert.deepEqual(d.verification, { status: "not_found", evidence: "out_of_range" });
 });
 
 test("get_hadith_by_number: shamela points at a page but the marker is absent → found:false, never a guess", async () => {
@@ -167,6 +186,7 @@ test("get_hadith_by_number: shamela points at a page but the marker is absent �
   assert.deepEqual(d.numbers_on_page, ["3033"]);
   assert.equal(d.page_data, undefined, "raw page not dumped; a preview is enough");
   assert.ok(d.page_preview.first_paragraph);
+  assert.deepEqual(d.verification, { status: "not_found", evidence: "marker_not_on_page" });
 });
 
 test("get_hadith_by_number: book without numbering service → found:false with canonical hint", async () => {
@@ -175,6 +195,7 @@ test("get_hadith_by_number: book without numbering service → found:false with 
   assert.match(d.reason, /no_hadith_numbering/);
   assert.equal(d.index_status.books, undefined, "compact index status");
   assert.equal(typeof d.canonical_map.verified_book_ids, "number");
+  assert.equal(d.verification.status, "not_found");
   const other = await json("get_hadith_by_number", { book_id: "735", hadith_number: "8" });
   assert.match(other.hint, /1681/);
 });
@@ -188,6 +209,9 @@ test("get_tafsir_by_ayah: book without a persisted tafsir index → found:false,
   assert.equal(fetched, 0);
   assert.match(d.hint, /build-tafsir-index/);
   assert.equal(d.index_status.books, undefined);
+  // No lookup — persisted or bounded live — was even attempted, so absence is
+  // not proven: `unverified`, never `not_found`.
+  assert.deepEqual(d.verification, { status: "unverified", evidence: "no_tafsir_index_for_book" });
 });
 
 test("get_tafsir_by_ayah: indexed ayah is answered from the persisted index with ONE page fetch", async () => {
@@ -208,6 +232,8 @@ test("get_tafsir_by_ayah: indexed ayah is answered from the persisted index with
   assert.equal(d.verified_on_page, true);
   assert.deepEqual(fetched, ["8473/721"]);
   assert.equal(d.is_canonical_numbering, true);
+  assert.deepEqual(d.verification, { status: "verified", evidence: "ayah_marker" });
+  assert.deepEqual(d.citation.verification, d.verification);
 });
 
 test("get_tafsir_by_ayah refuses a stale static page when its ayah marker is absent", async () => {
@@ -224,6 +250,7 @@ test("get_tafsir_by_ayah refuses a stale static page when its ayah marker is abs
   assert.equal(d.found, false);
   assert.equal(d.reason, "static_index_marker_not_on_page");
   assert.deepEqual(fetched, ["8473/721"]);
+  assert.deepEqual(d.verification, { status: "unverified", evidence: "stale_index" });
 });
 
 test("get_tafsir_by_ayah: unindexed ayah → bounded bisection INSIDE the surah range (≤ 20 fetches, precision labelled)", async () => {
@@ -247,6 +274,7 @@ test("get_tafsir_by_ayah: unindexed ayah → bounded bisection INSIDE the surah 
   assert.equal(d.page, "3176"); // ayahs 19,20,21
   assert.deepEqual(d.ayahs_marked_on_page, [19, 20, 21]);
   assert.deepEqual(d.surah_range, { start: "3168", end: "3201" });
+  assert.deepEqual(d.verification, { status: "verified", evidence: "ayah_marker" });
   const probes = fetched.slice(0, -1); // last fetch is the final page read for the passage
   assert.ok(probes.length <= 20, `probes ${probes.length}`);
   assert.ok(probes.every((p) => p >= 3169 && p <= 3201), `probes stayed inside the surah: ${probes}`);
@@ -258,7 +286,7 @@ test("get_tafsir_by_ayah: al-Fatiha (no ﴿…﴾ blocks in Ibn Kathir) → sura
     mockClient({
       bookPage: async (id, p) => {
         fetched.push(Number(p));
-        return { book_id: id, page_number: String(p), paragraphs: ["(إِيَّاكَ ��َعْبُدُ وَإِيَّاكَ نَسْتَعِينُ) قرأ السبعة (١)"], content: "…", footnotes: ["(١) في جـ"], chapter_path: [], nav: {}, volume: "1", printed_page: "134", url: `u/${p}` };
+        return { book_id: id, page_number: String(p), paragraphs: ["(إِيَّاكَ ����َعْبُدُ وَإِيَّاكَ نَسْتَعِينُ) قرأ السبعة (١)"], content: "…", footnotes: ["(١) في جـ"], chapter_path: [], nav: {}, volume: "1", printed_page: "134", url: `u/${p}` };
       },
     }),
   );
@@ -269,6 +297,8 @@ test("get_tafsir_by_ayah: al-Fatiha (no ﴿…﴾ blocks in Ibn Kathir) → sura
   assert.ok(d.note);
   assert.ok(fetched.every((p) => p >= 151 && p <= 197), `fetched ${fetched}`);
   assert.ok(fetched.length <= 21);
+  // An approximation is never reported as `verified` even though found:true.
+  assert.deepEqual(d.verification, { status: "unverified", evidence: "approximate_surah_start" });
 });
 
 test("list_canonical_editions returns the whitelist with provenance", async () => {
@@ -287,8 +317,10 @@ test("get_page_by_printed_number resolves via pagenum2id", async () => {
   assert.equal(d.found, true);
   assert.equal(d.page_number, "62");
   assert.deepEqual(d.hadith_numbers, ["8"]);
+  assert.deepEqual(d.verification, { status: "verified", evidence: "printed_page_mapping" });
   const miss = await json("get_page_by_printed_number", { book_id: "1727", volume: "9", printed_page: "1" });
   assert.equal(miss.found, false);
+  assert.deepEqual(miss.verification, { status: "not_found", evidence: "printed_page_not_found" });
 });
 
 test("search_library: hadith_numbers key is ABSENT (not undefined/empty) when the index does not know the page, and the response says why", async () => {
@@ -431,6 +463,9 @@ test("upstream failure returns a structured error, not a bare runtime message", 
   assert.equal(data.error, "network");
   assert.ok(data.hint && data.hint.length > 10);
   assert.equal(data.fabricated, false);
+  // A transient/reachability failure is `inconclusive` — never `not_found`;
+  // the source was never actually read.
+  assert.deepEqual(data.verification, { status: "inconclusive", evidence: "network" });
 });
 
 test("shamela HTTP 429 is classified as rate-limiting", async () => {
@@ -438,6 +473,14 @@ test("shamela HTTP 429 is classified as rate-limiting", async () => {
   assert.equal(data.error, "upstream_http");
   assert.equal(data.status, 429);
   assert.match(data.hint, /rate-limit/);
+  assert.deepEqual(data.verification, { status: "inconclusive", evidence: "http_429" });
+});
+
+test("shamela HTTP 403 is classified as upstream_blocked, never as content absence", async () => {
+  const { data } = await failCall(new Error("Shamela returned HTTP 403"), "get_book_details", { book_id: "1" });
+  assert.equal(data.error, "upstream_http");
+  assert.equal(data.status, 403);
+  assert.deepEqual(data.verification, { status: "upstream_blocked", evidence: "http_403" });
 });
 
 test("HTTP 200 challenge/empty bodies are classified as upstream_invalid", async () => {
@@ -446,6 +489,14 @@ test("HTTP 200 challenge/empty bodies are classified as upstream_invalid", async
   const { data } = await failCall(error, "get_categories", {});
   assert.equal(data.error, "upstream_invalid");
   assert.equal(data.fabricated, false);
+  assert.deepEqual(data.verification, { status: "inconclusive", evidence: "upstream_invalid" });
+});
+
+test("a bad_request (schema/validation) error carries no verification status — it never reached the source", async () => {
+  const error = new Error("Invalid arguments: expected string, received number");
+  const { data } = await failCall(error, "get_categories", {});
+  assert.equal(data.error, "bad_request");
+  assert.equal("verification" in data, false);
 });
 
 test("errors never leak a stack trace", async () => {
