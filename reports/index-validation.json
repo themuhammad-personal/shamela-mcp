@@ -1,0 +1,73 @@
+{
+  "status": "passed",
+  "hadith": {
+    "829": {
+      "book_id": "829",
+      "total": 1,
+      "verified": 1,
+      "unverified": 0
+    },
+    "1198": {
+      "book_id": "1198",
+      "total": 1,
+      "verified": 1,
+      "unverified": 0
+    },
+    "1435": {
+      "book_id": "1435",
+      "total": 1,
+      "verified": 1,
+      "unverified": 0
+    },
+    "1681": {
+      "book_id": "1681",
+      "total": 3,
+      "verified": 3,
+      "unverified": 0
+    },
+    "1726": {
+      "book_id": "1726",
+      "total": 1,
+      "verified": 1,
+      "unverified": 0
+    },
+    "1727": {
+      "book_id": "1727",
+      "total": 2,
+      "verified": 2,
+      "unverified": 0
+    },
+    "25794": {
+      "book_id": "25794",
+      "total": 1,
+      "verified": 1,
+      "unverified": 0
+    }
+  },
+  "tafsir": {
+    "7798": {
+      "book_id": "7798",
+      "surahs_covered": 114,
+      "ayahs_mapped": 31,
+      "previous_ayahs_mapped": 31,
+      "regression": false
+    },
+    "8473": {
+      "book_id": "8473",
+      "surahs_covered": 114,
+      "ayahs_mapped": 32,
+      "previous_ayahs_mapped": 32,
+      "regression": false
+    },
+    "20855": {
+      "book_id": "20855",
+      "surahs_covered": 114,
+      "ayahs_mapped": 235,
+      "previous_ayahs_mapped": 235,
+      "regression": false
+    }
+  },
+  "errors": [],
+  "warnings": [],
+  "generated_at": "2026-09-05T08:18:52.440Z"
+}

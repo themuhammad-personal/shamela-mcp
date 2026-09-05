@@ -5,18 +5,18 @@
   "description": "MCP server exposing shamela.ws (Islamic digital library) as a set of tools: browse categories/authors, read book pages, and run full-text search.",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev": "node server.mjs",
+    "build": "node --check server.mjs src/index.mjs",
+    "lint": "node --check server.mjs src/index.mjs src/tools.mjs",
+    "start": "node server.mjs",
     "test": "node --test test/*.test.mjs",
     "test:live": "SHAMELA_LIVE_TESTS=1 node --test test/live.test.mjs",
     "resolve:canonical": "node scripts/resolve-canonical-editions.mjs",
     "build:index": "node scripts/build-hadith-index.mjs",
     "build:tafsir": "node scripts/build-tafsir-index.mjs",
     "validate:index": "node scripts/validate-index.mjs",
-    "verify": "npm test && wrangler deploy --dry-run --outdir /tmp/wrangler-dry-run"
-  },
-  "devDependencies": {
-    "wrangler": "^4.0.0"
+    "refresh:orchestrate": "node scripts/orchestrate-refresh.mjs",
+    "verify": "npm test"
   },
   "license": "MIT",
   "dependencies": {

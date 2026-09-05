@@ -24,7 +24,7 @@ import {
   hadithNumbersOnPage,
   indexStatus,
 } from "./lib/hadith-index.mjs";
-import { detectHadithNumbers, extractHadith, detectAyahReferences, detectQuranBracketAyahs, gradingAcrossPages } from "./lib/citation-detect.mjs";
+import { detectHadithNumbers, detectHadithMarkers, extractHadith, detectAyahReferences, detectQuranBracketAyahs, gradingAcrossPages } from "./lib/citation-detect.mjs";
 import { normalizeArabic } from "./lib/arabic.mjs";
 
 export const SERVER_VERSION = "2.5.0";
@@ -236,8 +236,49 @@ export function createServer(client = sharedClient) {
     "বইয়ের title, author, metadata (muhaqqiq, publisher, parts, pagination_matches_print, hadith_numbering_service) ও সূচিপত্র (TOC)। is_canonical_numbering শুধুমাত্র হাতে-যাচাই করা book_id whitelist থেকে আসে; canonical_edition.confidence = verified | other_edition | title — other_edition হলে canonical_book_id-তে standard সংস্করণ দেওয়া থাকে।",
     { book_id: idParam },
     async (x) => {
-      const d = await client.details(x.book_id);
-      return response({ ...d, ...canonicalFields({ book_id: d.book_id, title: d.title, muhaqqiq: d.metadata?.muhaqqiq }) });
+      try {
+        const d = await client.details(x.book_id);
+        return response({ ...d, ...canonicalFields({ book_id: d.book_id, title: d.title, muhaqqiq: d.metadata?.muhaqqiq }) });
+      } catch (err) {
+        const is403 = /403/.test(String(err?.message ?? "")) || err?.status === 403;
+        const canonFields = canonicalFields({ book_id: x.book_id });
+        if (is403 && canonFields.is_canonical_numbering) {
+          const canon = canonicalRecord(x.book_id);
+          try {
+            const samplePage = await client.bookPage(x.book_id, 1);
+            if (samplePage && (samplePage.book_title || samplePage.author)) {
+              return response({
+                id: x.book_id,
+                book_id: x.book_id,
+                title: canon.title || samplePage.book_title || "",
+                author: samplePage.author || "",
+                author_id: "",
+                category: "",
+                category_id: "",
+                toc: [],
+                metadata: {
+                  publisher: "",
+                  edition: "",
+                  muhaqqiq: "",
+                  page_count: samplePage.nav?.last || "",
+                  parts: samplePage.volume || "",
+                  pagination_matches_print: true,
+                  hadith_numbering_service: true,
+                  fallback_used: true,
+                  fallback_reason: "upstream_overview_blocked_403",
+                },
+                url: `https://shamela.ws/book/${x.book_id}`,
+                metadata_fallback: true,
+                metadata_note: "Upstream /book overview endpoint blocked (HTTP 403); limited metadata resolved via permitted page fetch and verified canonical registry.",
+                ...canonicalFields({ book_id: x.book_id, title: canon.title }),
+              });
+            }
+          } catch {
+            // Page fetch failed as well; rethrow original error
+          }
+        }
+        throw err;
+      }
     },
   );
 
@@ -366,22 +407,53 @@ export function createServer(client = sharedClient) {
           });
         }
         const pageNumbers = detectHadithNumbers(page.paragraphs);
-        const complete = !hit.ends_at_page_end || !page.nav?.next;
+        const chunks = [page];
+        const slices = [{ page, start: hit.starts_at_paragraph, end: hit.starts_at_paragraph + hit.paragraphs.length }];
+        let text = hit.text;
+        let cursor = page;
+        let continuationComplete = !hit.ends_at_page_end || !cursor.nav?.next;
+        for (let i = 0; i < 2 && !continuationComplete; i += 1) {
+          let nextPage;
+          try {
+            nextPage = await client.bookPage(cached.book_id, cursor.nav.next);
+          } catch {
+            break;
+          }
+          const nextMarkers = detectHadithMarkers(nextPage.paragraphs);
+          const other = nextMarkers.find((m) => m.number !== String(x.hadith_number));
+          const cut = other ? other.paragraph : nextPage.paragraphs.length;
+          if (cut === 0) {
+            continuationComplete = true;
+            break;
+          }
+          text += "\n" + nextPage.paragraphs.slice(0, cut).join("\n");
+          chunks.push(nextPage);
+          slices.push({ page: nextPage, start: 0, end: cut });
+          if (other || !nextPage.nav?.next) continuationComplete = true;
+          cursor = nextPage;
+        }
+
         return response(
           formatHadith(
             {
               ...cached,
-              text: hit.text,
+              text,
               page_data: page,
-              spans_pages: [cached.page],
-              numbers_on_page: pageNumbers,
+              spans_pages: chunks.map((c) => c.page_number),
+              numbers_on_page: [...new Set(chunks.flatMap((c) => detectHadithNumbers(c.paragraphs)))],
               routes_on_page: hit.routes_on_page,
-              narrator_links: (page.narrator_links ?? []).filter(
-                (link) => link.paragraph >= hit.starts_at_paragraph && link.paragraph < hit.starts_at_paragraph + hit.paragraphs.length,
+              narrator_links: slices.flatMap(({ page: chunk, start, end }) =>
+                (chunk.narrator_links ?? []).filter((link) => link.paragraph >= start && link.paragraph < end),
               ),
+              pages: chunks.map((c) => ({
+                page: c.page_number,
+                footnotes: c.footnotes ?? [],
+                paragraphs: c.paragraphs ?? [],
+                numbers: detectHadithNumbers(c.paragraphs),
+              })),
               verified_on_page: true,
-              continuation_complete: complete,
-              ...(complete ? {} : { continuation_note: "static index fallback returned the verified page only; the hadith continues beyond the bounded fallback page." }),
+              continuation_complete: continuationComplete,
+              ...(continuationComplete ? {} : { continuation_note: "static index fallback returned verified pages up to continuation limit; the hadith continues beyond." }),
             },
             canon,
           ),

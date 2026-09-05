@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "description": "Canonical indexing refresh manifest for shamela-mcp",
+  "generated_at": "2026-09-05T00:00:00.000Z",
+  "hadith_targets": [
+    {
+      "key": "sahih-al-bukhari",
+      "book_id": "1681",
+      "title": "صحيح البخاري - ط السلطانية (دار طوق النجاة)",
+      "numbering": "ترقيم محمد فؤاد عبد الباقي",
+      "last_number": 7563,
+      "chunk_size": 100,
+      "parser": "paragraph_start",
+      "status": "active"
+    },
+    {
+      "key": "sahih-muslim",
+      "book_id": "1727",
+      "title": "صحيح مسلم - ت عبد الباقي",
+      "numbering": "ترقيم محمد فؤاد عبد الباقي",
+      "last_number": 3033,
+      "chunk_size": 100,
+      "parser": "muslim_parentheses",
+      "status": "active"
+    },
+    {
+      "key": "sunan-abi-dawud",
+      "book_id": "1726",
+      "title": "سنن أبي داود - ت محيي الدين عبد الحميد",
+      "numbering": "ترقيم محمد محيي الدين عبد الحميد",
+      "last_number": 5274,
+      "chunk_size": 100,
+      "parser": "paragraph_start",
+      "status": "active"
+    },
+    {
+      "key": "jami-at-tirmidhi",
+      "book_id": "1435",
+      "title": "سنن الترمذي - ت شاكر",
+      "numbering": "ترقيم أحمد محمد شاكر",
+      "last_number": 3956,
+      "chunk_size": 100,
+      "parser": "paragraph_start",
+      "status": "active"
+    },
+    {
+      "key": "sunan-an-nasai",
+      "book_id": "829",
+      "title": "سنن النسائي (المجتبى) - ط المصرية",
+      "numbering": "ترقيم عبد الفتاح أبو غدة",
+      "last_number": 5758,
+      "chunk_size": 100,
+      "parser": "paragraph_start",
+      "status": "active"
+    },
+    {
+      "key": "sunan-ibn-majah",
+      "book_id": "1198",
+      "title": "سنن ابن ماجه - ت عبد الباقي",
+      "numbering": "ترقيم محمد فؤاد عبد الباقي",
+      "last_number": 4341,
+      "chunk_size": 100,
+      "parser": "paragraph_start",
+      "status": "active"
+    },
+    {
+      "key": "musnad-ahmad",
+      "book_id": "25794",
+      "title": "مسند الإمام أحمد بن حنبل - ط الرسالة",
+      "numbering": "ترقيم مؤسسة الرسالة (شعيب الأرنؤوط)",
+      "last_number": 27647,
+      "chunk_size": 200,
+      "parser": "paragraph_start",
+      "status": "active"
+    },
+    {
+      "key": "muwatta-malik",
+      "book_id": "1699",
+      "title": "موطأ مالك - رواية يحيى - ت عبد الباقي",
+      "numbering": "ترقيم محمد فؤاد عبد الباقي (متسلسل داخل كل كتاب)",
+      "per_kitab_numbering": true,
+      "global_index": false,
+      "status": "restricted",
+      "note": "Global numbering unsafe; restricted to kitab-scoped resolution"
+    }
+  ],
+  "tafsir_targets": [
+    {
+      "key": "tafsir-ibn-kathir",
+      "book_id": "8473",
+      "title": "تفسير القرآن العظيم (ابن كثير) - ت سامي السلامة",
+      "surah_count": 114,
+      "last_page": 4588,
+      "parser": "quran_bracket",
+      "chunk_pages": 200,
+      "status": "active"
+    },
+    {
+      "key": "tafsir-al-tabari",
+      "book_id": "7798",
+      "title": "تفسير الطبري = جامع البيان عن تأويل آي القرآن - ت التركي",
+      "surah_count": 114,
+      "last_page": 16700,
+      "parser": "quran_bracket_and_toc",
+      "chunk_pages": 400,
+      "status": "active"
+    },
+    {
+      "key": "tafsir-al-qurtubi",
+      "book_id": "20855",
+      "title": "تفسير القرطبي = الجامع لأحكام القرآن - دار الكتب المصرية",
+      "surah_count": 114,
+      "last_page": 7453,
+      "parser": "editorial_heading",
+      "chunk_pages": 300,
+      "status": "active"
+    }
+  ],
+  "policies": {
+    "checkpoint_schema_version": 2,
+    "atomic_writes": true,
+    "fail_on_regression": true,
+    "fail_on_shrinkage": true
+  }
+}

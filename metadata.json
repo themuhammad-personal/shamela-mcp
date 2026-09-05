@@ -1,0 +1,8 @@
+{
+  "name": "Shamela MCP Server",
+  "description": "Model Context Protocol (MCP) server exposing shamela.ws digital Islamic library with 14 tools and Streamable HTTP endpoint",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

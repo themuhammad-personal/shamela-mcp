@@ -550,31 +550,62 @@ function bracketSegments(text, { first = false, last = false } = {}) {
  * The surah number in parentheses must match `surah`; when it is absent the
  * name is resolved instead. Only a short paragraph that IS the heading counts.
  */
+const AYAH_LABEL_RE_STR = "(?:الآيات|الايات|الآية|الاية|آية|اية)";
 const AYAH_HEADING_RE = new RegExp(
-  `^\\s*\\[?\\s*سورة\\s+([^\\[\\]():：]{1,30}?)\\s*(?:\\((${DIGITS}{1,3})\\))?\\s*[:：]\\s*(?:الآيات|الايات|آية|اية)\\s+(${DIGITS}{1,3})(?:\\s*(?:إلى|الى|-|–)\\s*(${DIGITS}{1,3}))?\\s*\\]?\\s*$`,
+  `^\\s*\\[?\\s*(?:سورة\\s+([^\\[\\]():：]{1,40}?)\\s*(?:\\((${DIGITS}{1,3})\\))?\\s*[:：]?\\s*)?${AYAH_LABEL_RE_STR}\\s*[:：]?\\s*(.+?)\\s*\\]?\\s*$`,
 );
+
+function parseEditorialAyahSpec(specStr, maxCount = 286) {
+  const latin = toLatinDigits(String(specStr ?? "").trim());
+  const parts = latin.split(/\s*(?:،|,)\s*/);
+  const ayahs = [];
+  for (const part of parts) {
+    const rangeMatch = /^(\d{1,3})\s*(?:إلى|الى|وحتى|[-–—])\s*(\d{1,3})$/.exec(part);
+    if (rangeMatch) {
+      const from = Number(rangeMatch[1]);
+      const to = Number(rangeMatch[2]);
+      if (!from || to < from || to > maxCount || from > maxCount) return null;
+      if (to - from + 1 > 50) return null;
+      for (let a = from; a <= to; a += 1) ayahs.push(a);
+    } else {
+      const singleMatch = /^(\d{1,3})$/.exec(part);
+      if (singleMatch) {
+        const num = Number(singleMatch[1]);
+        if (!num || num > maxCount) return null;
+        ayahs.push(num);
+      } else {
+        return null;
+      }
+    }
+  }
+  return ayahs.length ? [...new Set(ayahs)].sort((a, b) => a - b) : null;
+}
+
 /** Is this title/paragraph an editorial ayah heading («[سورة X (n): آية m]»)? Surah-agnostic. */
 export function isAyahHeading(text) {
   const raw = String(text ?? "").trim();
-  return raw.length > 0 && raw.length <= 80 && AYAH_HEADING_RE.test(raw);
+  if (raw.length === 0 || raw.length > 100) return false;
+  const m = AYAH_HEADING_RE.exec(raw);
+  if (!m) return false;
+  return parseEditorialAyahSpec(m[3], 286) !== null;
 }
 
 export function ayahHeadingInParagraph(text, surah) {
   const raw = String(text ?? "").trim();
-  if (!raw || raw.length > 80) return [];
+  if (!raw || raw.length > 100) return [];
   const m = AYAH_HEADING_RE.exec(raw);
   if (!m) return [];
   const count = AYAH_COUNTS[surah] ?? 0;
   if (!count) return [];
-  const numbered = m[2] ? Number(toLatinDigits(m[2])) : 0;
-  const named = numbered ? 0 : lookupSurah(m[1], { allowSingleLetter: true });
-  if ((numbered || named) !== surah) return [];
-  const from = Number(toLatinDigits(m[3]));
-  const to = m[4] ? Number(toLatinDigits(m[4])) : from;
-  if (!from || to < from || to > count) return [];
-  const out = [];
-  for (let a = from; a <= to && a - from < 50; a += 1) out.push(a);
-  return out;
+  if (m[2]) {
+    const numbered = Number(toLatinDigits(m[2]));
+    if (numbered !== surah) return [];
+  } else if (m[1]) {
+    const named = lookupSurah(m[1], { allowSingleLetter: true });
+    if (named !== surah) return [];
+  }
+  const ayahs = parseEditorialAyahSpec(m[3], count);
+  return ayahs ?? [];
 }
 
 /**
