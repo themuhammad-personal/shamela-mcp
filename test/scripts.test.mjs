@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { robotsAllows } from "../scripts/lib/crawl-policy.mjs";
 
@@ -65,6 +67,22 @@ test("builder limit and checkpoint options are validated offline", () => {
   ]) {
     const result = run(script, option, "--dry-run");
     assert.notEqual(result.status, 0);
+  }
+});
+
+test("validate-index runs fully offline against the current committed data and passes", () => {
+  const scratchDir = mkdtempSync(resolve(tmpdir(), "shamela-index-validation-"));
+  try {
+    const result = spawnSync(process.execPath, [resolve(root, "scripts", "validate-index.mjs")], {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, INDEX_VALIDATION_REPORT_DIR: scratchDir },
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Validation passed/);
+  } finally {
+    rmSync(scratchDir, { recursive: true, force: true });
   }
 });
 

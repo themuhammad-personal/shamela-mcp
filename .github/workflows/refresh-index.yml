@@ -1,7 +1,8 @@
 name: Refresh citation index
 
-# Builds/refreshes the static hadith/tafsir index and the coverage report from
-# live shamela.ws, then opens a PR with the result. Manual + monthly.
+# Builds/refreshes the static hadith/tafsir citation index from live
+# shamela.ws, validates it offline, then opens a PR with the result.
+# Manual + monthly.
 #
 # The Worker does NOT depend on this: get_hadith_by_number falls back to
 # shamela's live /ajax/specialnumber2id lookup when the static index is empty.
@@ -69,9 +70,6 @@ jobs:
       - name: Verify canonical whitelist against live shamela.ws
         run: node scripts/resolve-canonical-editions.mjs
 
-      - name: Coverage report (subcontinental works)
-        run: node scripts/check-coverage.mjs
-
       - name: Build hadith index
         if: ${{ github.event_name == 'schedule' || inputs.book != '' }}
         env:
@@ -103,21 +101,46 @@ jobs:
             .hadith-index.checkpoint.json
             .tafsir-index.checkpoint.json
 
+      - name: Validate generated index (schema, canonical ids, Quran bounds, regression)
+        run: npm run validate:index
+
+      - name: Generated data diff summary
+        if: ${{ always() }}
+        run: |
+          {
+            echo "### Generated data diff";
+            echo '```diff';
+            git diff -- src/data/hadith-index.mjs src/data/tafsir-index.mjs || true;
+            echo '```';
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Health gate after generated data changes
         run: npm run verify
+
+      - name: Upload validation report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: index-validation-report
+          if-no-files-found: ignore
+          path: reports/
 
       - name: Open pull request
         uses: peter-evans/create-pull-request@v8.1.1
         with:
           branch: bot/refresh-index
-          title: "chore: refresh citation index & coverage report"
-          commit-message: "chore: refresh citation index & coverage report"
+          title: "chore: refresh citation index (machine-generated, needs review)"
+          commit-message: "chore: refresh citation index (machine-generated, needs review)"
           body: |
-            Automated by `.github/workflows/refresh-index.yml`.
+            Automated by `.github/workflows/refresh-index.yml`. Machine-generated —
+            requires manual review before merge.
             - `src/data/hadith-index.mjs` (merged, never truncated)
             - `src/data/tafsir-index.mjs` (surah ranges + ayah → page; merged)
-            - `reports/coverage.*`
-            Review the run log for "unverified" counts before merging.
+            - `reports/index-validation.*` (schema, canonical id, Quran-bounds and
+              coverage-regression validation; the workflow already fails before
+              this PR is opened if validation fails or verified coverage regressed)
+            Review `reports/index-validation.md` and the "unverified" counts in the
+            run log before merging.
           add-paths: |
             src/data/hadith-index.mjs
             src/data/tafsir-index.mjs
