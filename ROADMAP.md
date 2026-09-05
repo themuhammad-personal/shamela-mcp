@@ -15,13 +15,12 @@ offline after that audit.
 | Phase | Status |
 |---|---|
 | 0.1 reconstruct source | ✅ done — `src/index.mjs` + `src/lib/*.mjs` + `src/tools.mjs`; legacy 783 KB `src/worker.mjs` deleted |
-| 0.2 test harness | ✅ done — `node --test`, 147 offline tests incl. a **real shamela page fixture** (`test/fixtures/`) and hardening regressions |
+| 0.2 test harness | ✅ done — `node --test`, offline tests incl. a **real shamela page fixture** (`test/fixtures/`) and hardening regressions |
 | 0.3 storage decision | ✅ static data files (`src/data/*.mjs`) + live fallback; KV not needed yet |
 | 0.4 rate limiting | ✅ upstream side (per-isolate concurrency cap 4, 20 s timeout, 15-min cache, in-flight de-dupe, hadith builder default delay 250 ms, tafsir builder default delay 400 ms) **+ optional endpoint auth**: set the `MCP_API_KEY` secret and `/mcp` requires `Authorization: Bearer` / `X-API-Key` / `?key=` (401 otherwise, constant-time compare, query key stripped before transport, OPTIONS + `/` stay open). Unset = open, as before (`src/lib/auth.mjs`, README «Protecting the endpoint») |
 | 0.5 ToS/copyright note | ✅ README «Terms, attribution & copyright»: shamela.ws is a free non-profit project (donation links recorded); this client fetches live, never mirrors; only page-number indexes are stored; every response carries edition + printed page + URL for attribution; takedown note |
 | 0.6 CI/CD | ✅ **fixed** — deploy was broken since PR #1 (wrangler 4.128 needs Node ≥22; workflow used Node 20). Now Node 22 + `npm ci` + tests + dry-run before deploy |
 | 1.1 canonical editions | ✅ **hand-verified whitelist** of 11 book_ids (see `src/data/canonical-book-ids.mjs`), each checked against `/ajax/specialnumber2id`. The old محقق-name heuristic was wrong on real data (false negative on Bukhari 1681) and is gone. `list_canonical_editions` tool added |
-| 1.2 coverage gap (P5) | 🟡 script exists; `reports/` not yet generated (needs a network run — see workflow) |
 | 1.3 filter docs | ✅ done |
 | 2.1 `get_hadith_by_number` | ✅ **works without any prebuilt index** — uses shamela's own `رقم الحديث` lookup (`/ajax/specialnumber2id`) then verifies the «N -» marker on the fetched page; continues across page breaks; refuses out-of-range numbers; never guesses. **Editorial grading**: explicit `[حكم الألباني] : …` / `قال الألباني: …` in the page apparatus → `grading` (all three printed shapes: Tirmidhi `: صحيح`, Abu Dawud `: حسن صحيح`, Ibn Majah label + newline); attributed only when unambiguous, else `grading: null` + `gradings_on_page`; the compiler's own «حسن صحيح» is never a grading |
 | 2.2 reverse page→hadith | ✅ `hadith_numbers` on `get_book_page` come from **on-page markers** (footnotes excluded); unknown editions/pages stay empty unless Shamela's page carries independent hadith-number evidence. Verified static data is used only for `search_library` enrichment and direct number lookup location hints |
@@ -50,14 +49,16 @@ offline after that audit.
 
 ### Where the network-dependent scripts run
 
-`resolve:canonical` (now a **re-check** of the hand-verified whitelist),
-`build:index`, `build:tafsir` and `check:coverage` need real access to
-`shamela.ws`. The **`Refresh citation index`** workflow
-(`.github/workflows/refresh-index.yml`, manual + monthly) runs them on a GitHub
-runner and opens a PR with `src/data/hadith-index.mjs`,
-`src/data/tafsir-index.mjs` + `reports/*`. The Worker does not depend on the
-hadith index (live lookup); the tafsir index ships with surah ranges already,
-and `build:tafsir` only makes ayah lookups exact/cheaper.
+  `resolve:canonical` (now a **re-check** of the hand-verified whitelist),
+> `build:index` and `build:tafsir` need real access to `shamela.ws`;
+  `validate:index` runs offline afterward. The **`Refresh citation index`**
+  workflow (`.github/workflows/refresh-index.yml`, manual + monthly) runs them
+  on a GitHub runner, validates the result (schema, canonical id, Quran
+  bounds, coverage regression), and opens a PR with
+  `src/data/hadith-index.mjs`, `src/data/tafsir-index.mjs` + `reports/*`. The
+  Worker does not depend on the hadith index (live lookup); the tafsir index
+  ships with surah ranges already, and `build:tafsir` only makes ayah lookups
+  exact/cheaper.
 
 ### Verified shamela.ws facts (2026-09-03)
 
@@ -146,7 +147,6 @@ scheduled worker), never inline in a tool call.
 | # | Task | Impact | Feasibility |
 |---|---|---|---|
 | 1.1 | **Canonical-edition whitelist → `is_canonical_numbering`** (Priority 3) | ⭐⭐⭐ | High (curated table) |
-| 1.2 | **Coverage-gap investigation: Subcontinental Hanafi/Urdu-origin works** (Priority 5) — `معارف القرآن`, `بيان القرآن`, `أحسن الفتاوى`… | ⭐⭐ | High (search + document) |
 | 1.3 | Document `century` param mapping (`decades[]`; `-2` = pre-Islamic) and `exclude_words` post-filter limitation in tool descriptions | ⭐ | High (docs only) |
 
 **1.1 rationale.** Quoting "Bukhari #8" from the wrong edition is worse than
@@ -216,7 +216,7 @@ results so the model never has to guess among 5 Bukhari editions.
 - Don't merge sunnah.com / dorar.net data directly (use as design reference only).
 - Don't regress the existing search + Arabic-normalization behavior.
 - Flag "the source doesn't support this cleanly" as a **known limitation** in
-  tool descriptions, never a silent gap (see Priority 5).
+  tool descriptions, never a silent gap.
 
 ---
 
@@ -228,5 +228,5 @@ Phase 0 (foundation) ─▶ Phase 1 (cheap wins) ─▶ Phase 2 (citation core)
                                                 ─▶ Phase 4 (reading UX)
 ```
 
-Start: **1.1** (canonical editions) and **1.2** (coverage gap) in parallel,
-while **0.1–0.3** (source split + storage decision) unblocks Phase 2.
+Start: **1.1** (canonical editions), while **0.1–0.3** (source split + storage
+decision) unblocks Phase 2.

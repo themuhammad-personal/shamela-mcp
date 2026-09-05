@@ -37,7 +37,10 @@ ordinary pull-request tests:
 - `npm run resolve:canonical`
 - `npm run build:index`
 - `npm run build:tafsir`
-- `npm run check:coverage`
+
+`npm run validate:index` is offline and safe to run at any time — it checks
+schema, canonical book ids, Quran ayah bounds, and that verified coverage has
+not regressed versus the version committed at `HEAD`.
 
 Do not run an index-building script against Shamela as part of a broad parser
 experiment. Use the smallest possible single-page verification, keep the

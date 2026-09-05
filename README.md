@@ -86,11 +86,12 @@ scripts/
   resolve-canonical-editions.mjs   re-check the whitelist against live shamela (--list <title> to explore)
   build-hadith-index.mjs           build the static hadith index via specialnumber2id + on-page verification
   build-tafsir-index.mjs           live, delayed one-book walk → surah ranges + every ayah's first page
-  check-coverage.mjs               probe for absent subcontinental works → reports/
-test/                              147 offline tests (node --test), incl. real-page fixture
+  validate-index.mjs               offline gate: schema, canonical-id, Quran-bounds and coverage-regression
+                                    checks on the generated index → reports/
+test/                              offline tests (node --test), incl. real-page fixture
 .github/workflows/
   deploy.yml                Node 22, npm ci, tests, dry-run, deploy on push to main
-  refresh-index.yml         manual/monthly: verify whitelist, coverage report, build index → PR
+  refresh-index.yml         manual/monthly: verify whitelist, build index, validate, health gate → PR
 ```
 
 ## Development
@@ -106,7 +107,7 @@ npm run resolve:canonical      # re-check canonical ids against live shamela.ws
 node scripts/build-hadith-index.mjs --book 1681 --from=1 --to=1000 --max-lookups=1000 --checkpoint=.hadith.json --resume
 npm run build:tafsir -- --tafsir 8473 --from=1 --to=1000 --max-pages=1000 --checkpoint=.tafsir.json --resume
 # Run further bounded slices deliberately; Muwatta 1699 is rejected because its numbering restarts per kitab.
-node scripts/check-coverage.mjs
+npm run validate:index         # offline: schema, canonical ids, Quran bounds, coverage-regression gate
 ```
 
 Requires **Node ≥ 22** (the lockfile currently resolves Wrangler 4.128.0).
@@ -137,9 +138,14 @@ Muwatta 1699 uses per-kitab numbering. Successful lookups therefore always retur
 - **Copyright of the texts.** The classical works are in the public domain, but the *editions* (تحقيق, footnotes, numbering, gradings such as Albani's) are the work of their editors/publishers and are reproduced on shamela.ws for study. Every tool response therefore carries the `book_id`, edition title, volume, printed page, and the `shamela.ws/book/<id>/<page>` URL so that any quotation can be **attributed to the edition and to shamela.ws**. Users who republish extracts are responsible for the applicable copyright/fair-use rules in their jurisdiction; this project grants no rights in the texts (its own code is MIT).
 - **Takedown.** If shamela.ws or a rights-holder objects to any behaviour of this client, open an issue and it will be changed or removed.
 
-## Known data gaps
+## Scope note
 
-Some subcontinental Hanafi / Urdu-origin works (e.g. معارف القرآن, بيان القرآن, أحسن الفتاوى) are absent from shamela.ws's Arabic corpus (أحسن الفتاوى confirmed absent 2026-09-03). Tool descriptions say so explicitly: an empty result ≠ "the work doesn't exist".
+shamela.ws hosts Arabic-language works only. This connector never claims
+coverage of, or investigates gaps in, any non-Arabic-language corpus; an
+empty `search_books_by_name` / `search_library` result means "not found under
+this title in this Arabic-language library," never a judgment on whether a
+work exists elsewhere. Arabic-language works are searched and cited without
+regard to the author's madhhab.
 
 ## Contributing
 

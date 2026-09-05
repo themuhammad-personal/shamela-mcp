@@ -100,6 +100,55 @@ export function classifyError(err) {
   return { kind: "internal", message, hint: "connector-এর ভেতরে অপ্রত্যাশিত error হয়েছে।" };
 }
 
+/**
+ * Verification-status contract attached to every citation-shaped response
+ * (`get_hadith_by_number`, `get_tafsir_by_ayah`, `get_page_by_printed_number`,
+ * and the `guarded()` error path). Purely additive — `verification` never
+ * replaces `found`/`ok`/`error`, it only labels *why* the tool landed where it
+ * did, using one vocabulary:
+ *
+ *   verified         — the requested marker/number is on the page fetched now
+ *   ambiguous         — a real match exists but per-kitab numbering (Muwatta) or
+ *                       another structural fact leaves more than one candidate
+ *   not_found         — a live, completed check found no matching marker
+ *   unverified        — a static index pointed somewhere, but re-verification
+ *                       against the live page failed, or the location is an
+ *                       approximation (nearest_before/surah_start), not a match
+ *   upstream_blocked  — shamela.ws refused the request (HTTP 403); this is
+ *                       never reported as `not_found`
+ *   inconclusive      — a transient failure (429/5xx/network/timeout/bad body)
+ *                       means the source was never actually read; never
+ *                       reported as `not_found` either
+ *
+ * `upstream_blocked` and `inconclusive` must never be downgraded to
+ * `not_found` by a caller — the source was not read, so absence is not proven.
+ */
+function verified(evidence) {
+  return { status: "verified", evidence };
+}
+function ambiguous(evidence) {
+  return { status: "ambiguous", evidence };
+}
+function notFound(evidence) {
+  return { status: "not_found", evidence };
+}
+function unverified(evidence) {
+  return { status: "unverified", evidence };
+}
+
+/**
+ * Map a classified error (see `classifyError`) onto the verification contract.
+ * `bad_request`/`internal` are not source-reachability facts — they never got
+ * far enough to say anything about a citation — so they carry no `verification`.
+ */
+function verificationForError(info) {
+  if (info.kind === "bad_request" || info.kind === "internal") return null;
+  if (info.kind === "upstream_http" && info.status === 403) {
+    return { status: "upstream_blocked", evidence: "http_403" };
+  }
+  return { status: "inconclusive", evidence: info.kind === "upstream_http" ? `http_${info.status}` : info.kind };
+}
+
 /** Wrap a handler so failures are structured instead of opaque. */
 function guarded(tool, handler) {
   return async (args) => {
@@ -107,6 +156,7 @@ function guarded(tool, handler) {
       return await handler(args);
     } catch (err) {
       const info = classifyError(err);
+      const v = verificationForError(info);
       return {
         ...response({
           ok: false,
@@ -116,6 +166,7 @@ function guarded(tool, handler) {
           ...(info.status ? { status: info.status } : {}),
           hint: info.hint,
           fabricated: false,
+          ...(v ? { verification: v } : {}),
           note: "কোনো তথ্য অনুমান করা হয়নি — source থেকে কিছুই ফেরত দেওয়া হয়নি।",
         }),
         isError: true,
@@ -139,6 +190,7 @@ class StructuredMcpServer extends McpServer {
     const info = validation
       ? { kind: "bad_request", message: sanitize(validation[2] || message), hint: "tool-এর arguments সঠিক নয় — schema অনুযায়ী পাঠান।" }
       : classifyError(message);
+    const v = verificationForError(info);
     return {
       ...response({
         ok: false,
@@ -148,6 +200,7 @@ class StructuredMcpServer extends McpServer {
         ...(info.status ? { status: info.status } : {}),
         hint: info.hint,
         fabricated: false,
+        ...(v ? { verification: v } : {}),
         note: "কোনো তথ্য অনুমান করা হয়নি — source থেকে কিছুই ফেরত দেওয়া হয়নি।",
       }),
       isError: true,
@@ -308,6 +361,7 @@ export function createServer(client = sharedClient) {
             hadith_number: x.hadith_number,
             page: cached.page,
             ...canon,
+            verification: unverified("stale_index"),
             note: "static সূচি এই পৃষ্ঠাটি দেখালেও বর্তমান পৃষ্ঠায় অনুচ্ছেদ-শুরুতে চাওয়া নম্বরটি নেই; stale index বা edition পরিবর্তন হতে পারে। কোনো matn অনুমান করা হয়নি।",
           });
         }
@@ -342,6 +396,10 @@ export function createServer(client = sharedClient) {
           ...canon,
           index_status: indexStatus(),
           canonical_map: canonicalMapStatus(),
+          // The source was actually reached and read (no exception — that would
+          // have gone through `guarded()` as upstream_blocked/inconclusive
+          // instead); a completed live check simply found no matching marker.
+          verification: notFound(live.reason),
           ...(page_data
             ? { page_preview: { page: page_data.page_number, chapter_path: page_data.chapter_path, first_paragraph: page_data.paragraphs?.[0]?.slice(0, 200) } }
             : {}),
@@ -368,6 +426,16 @@ export function createServer(client = sharedClient) {
     // never reported as a grading.
     const pages = r.pages ?? [{ page: r.page, footnotes: pd.footnotes ?? [], paragraphs: pd.paragraphs ?? [], numbers: r.numbers_on_page ?? detectHadithNumbers(pd.paragraphs ?? []) }];
     const g = gradingAcrossPages(pages, r.hadith_number);
+    const verifiedOnPage = r.verified_on_page ?? r.source !== "static_index";
+    // Per-kitab numbering (Muwatta) with no kitab resolved from chapter_path
+    // leaves a real candidate ambiguity even though a page marker matched —
+    // report `ambiguous`, never `verified`, until the kitab is confirmed.
+    const verification =
+      numberingAmbiguous && !resolvedKitab
+        ? ambiguous("kitab_unresolved")
+        : !verifiedOnPage
+          ? unverified("index_not_reverified")
+          : verified(numberingAmbiguous ? "page_marker+kitab_resolved" : "page_marker");
     return {
       found: true,
       book_id: r.book_id,
@@ -397,11 +465,12 @@ export function createServer(client = sharedClient) {
       gradings_on_page: g.gradings_on_page.length ? g.gradings_on_page : undefined,
       grading_note: g.grading_note,
       source: r.source,
-      verified_on_page: r.verified_on_page ?? r.source !== "static_index",
+      verified_on_page: verifiedOnPage,
       continuation_complete: r.continuation_complete ?? true,
       ...(r.continuation_issue ? { continuation_issue: r.continuation_issue } : {}),
       ...(r.continuation_note ? { continuation_note: r.continuation_note } : {}),
       ...canon,
+      verification,
       citation: {
         book_id: r.book_id,
         edition: canonicalRecord(r.book_id)?.title ?? pd.book_title,
@@ -411,6 +480,7 @@ export function createServer(client = sharedClient) {
         printed_page: pd.printed_page,
         page: r.page,
         url: pd.url,
+        verification,
       },
     };
   }
@@ -423,17 +493,27 @@ export function createServer(client = sharedClient) {
     async (x) => {
       let res = resolveTafsirAyah(x.book_id, x.surah, x.ayah);
       if (!res.found) res = await resolveTafsirAyahBounded(client, x.book_id, x.surah, x.ayah);
-      if (!res.found)
+      if (!res.found) {
+        // "invalid_ayah_reference"/"ayah_out_of_range" are definitive (the
+        // reference itself is impossible). "no_tafsir_index_for_book" and
+        // "surah_not_indexed" mean no lookup — persisted or bounded live — was
+        // even possible, so absence is not proven. "ayah_not_located_within_budget"
+        // means a bounded *live* search ran and still could not place the ayah
+        // within its page budget — real doubt remains, not proof of absence.
+        const tafsirNotFoundVerification =
+          res.reason === "invalid_ayah_reference" || res.reason === "ayah_out_of_range" ? notFound(res.reason) : unverified(res.reason);
         return response({
           ...res,
           book_id: x.book_id,
           index_status: indexStatus(),
           ...canonicalFields({ book_id: x.book_id }),
+          verification: tafsirNotFoundVerification,
           hint:
             res.reason === "no_tafsir_index_for_book"
               ? "এই book_id-র জন্য persisted তাফসির সূচি নেই (বর্তমানে: ইবনে কাসীর 8473, তাবারী 7798, কুরতুবী 20855)। scripts/build-tafsir-index.mjs --tafsir <id> চালিয়ে সূচি তৈরি করুন, অথবা get_book_details → get_book_page ব্যবহার করুন।"
               : "get_book_details দিয়ে TOC দেখে get_book_page ব্যবহার করুন।",
         });
+      }
       const page = await client.bookPage(res.book_id, res.page);
       const markedAyahs = detectQuranBracketAyahs(page.paragraphs ?? [], res.surah);
       // The persisted map is a location hint, not proof. Re-check exact answers
@@ -450,9 +530,15 @@ export function createServer(client = sharedClient) {
           source: res.source,
           index_status: indexStatus(),
           ...canonicalFields({ book_id: res.book_id }),
+          verification: unverified("stale_index"),
           note: "তাফসির সূচি এই পৃষ্ঠাটি দেখালেও বর্তমান পৃষ্ঠায় চাওয়া আয়াতের marker নেই; stale index বা edition পরিবর্তন হতে পারে। কোনো passage অনুমান করা হয়নি।",
         });
       }
+      const exactOnPage = res.precision === "exact" && markedAyahs.includes(Number(res.ayah));
+      // Only an exact ayah-bracket match on the currently fetched page is
+      // `verified`; `nearest_before`/`surah_start` are approximations by
+      // construction — the specific ayah's marker was never found.
+      const tafsirVerification = exactOnPage ? verified("ayah_marker") : unverified(`approximate_${res.precision}`);
       return response({
         found: true,
         book_id: res.book_id,
@@ -461,7 +547,8 @@ export function createServer(client = sharedClient) {
         page: res.page,
         precision: res.precision,
         source: res.source,
-        verified_on_page: res.precision === "exact" && markedAyahs.includes(Number(res.ayah)),
+        verified_on_page: exactOnPage,
+        verification: tafsirVerification,
         note: res.note,
         surah_range: res.surah_range,
         pages_fetched: res.pages_fetched,
@@ -474,7 +561,16 @@ export function createServer(client = sharedClient) {
         footnotes: page.footnotes?.length ? page.footnotes : undefined,
         nav: page.nav,
         ...canonicalFields({ book_id: res.book_id }),
-        citation: { book_id: res.book_id, surah: res.surah, ayah: res.ayah, volume: page.volume, printed_page: page.printed_page, page: res.page, url: page.url },
+        citation: {
+          book_id: res.book_id,
+          surah: res.surah,
+          ayah: res.ayah,
+          volume: page.volume,
+          printed_page: page.printed_page,
+          page: res.page,
+          url: page.url,
+          verification: tafsirVerification,
+        },
       });
     },
   );
@@ -494,10 +590,19 @@ export function createServer(client = sharedClient) {
     { book_id: idParam, volume: pageParam, printed_page: pageParam },
     async (x) => {
       const page = await client.printedPageId(x.book_id, x.volume, x.printed_page);
-      if (!page) return response({ found: false, reason: "printed_page_not_found", ...x });
+      // A completed live call to shamela's own /ajax/pagenum2id either resolved
+      // a page or definitively did not — no page fetch was made either way, so
+      // "not_found" is warranted (nothing was skipped or timed out).
+      if (!page) return response({ found: false, reason: "printed_page_not_found", ...x, verification: notFound("printed_page_not_found") });
       const p = await client.bookPage(x.book_id, page);
       const numbers = hadithNumbersWithEvidence(x.book_id, p);
-      return response({ found: true, ...p, hadith_numbers: numbers, hadith_numbers_source: numbers.length ? "page_markers" : "none" });
+      return response({
+        found: true,
+        ...p,
+        hadith_numbers: numbers,
+        hadith_numbers_source: numbers.length ? "page_markers" : "none",
+        verification: verified("printed_page_mapping"),
+      });
     },
   );
 
