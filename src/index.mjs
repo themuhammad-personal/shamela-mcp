@@ -13,6 +13,7 @@
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { createServer } from "./tools.mjs";
 import { authorize, stripApiKeyFromUrl, unauthorizedResponse } from "./lib/auth.mjs";
+import { ICON_SVG, ICON_PNG_192_BASE64, ICON_PNG_64_BASE64 } from "./icons.mjs";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -28,6 +29,9 @@ const LANDING_HTML = `<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Shamela MCP</title>
+    <link rel="icon" type="image/svg+xml" href="/icon.svg">
+    <link rel="icon" type="image/png" sizes="64x64" href="/icon-64.png">
+    <link rel="apple-touch-icon" href="/icon-192.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -520,6 +524,26 @@ const LANDING_HTML = `<!DOCTYPE html>
 export default {
   async fetch(request, env = {}) {
     const url = new URL(request.url);
+
+    if (url.pathname === "/icon.svg") {
+      return new Response(ICON_SVG, {
+        status: 200,
+        headers: { "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": "public, max-age=86400" },
+      });
+    }
+    if (url.pathname === "/icon-192.png" || url.pathname === "/icon.png") {
+      return new Response(Buffer.from(ICON_PNG_192_BASE64, "base64"), {
+        status: 200,
+        headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" },
+      });
+    }
+    if (url.pathname === "/icon-64.png" || url.pathname === "/favicon.ico") {
+      return new Response(Buffer.from(ICON_PNG_64_BASE64, "base64"), {
+        status: 200,
+        headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=86400" },
+      });
+    }
+
     if (url.pathname !== "/mcp") {
       return new Response(LANDING_HTML, {
         status: 200,
