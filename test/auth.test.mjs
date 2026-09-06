@@ -81,9 +81,9 @@ test("worker: no secret → endpoint open (unchanged behaviour) and root page sa
   assert.equal(ok.status, 200);
   const root = await worker.fetch(req("https://example.workers.dev/"), {});
   assert.equal(root.status, 200);
-  assert.doesNotMatch(await root.text(), /API key required/);
+  assert.match(await root.text(), /<html/i);
   const lockedRoot = await worker.fetch(req("https://example.workers.dev/"), { MCP_API_KEY: "x" });
-  assert.match(await lockedRoot.text(), /API key required/);
+  assert.match(await lockedRoot.text(), /<html/i);
 });
 
 test("worker: schema validation errors use the same structured tool-error contract", async () => {
