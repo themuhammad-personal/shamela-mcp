@@ -41,7 +41,7 @@ import { AYAH_COUNTS, surahHeadingInParagraph, quranBracketAyahsInParagraph } fr
 import { surahStartsFromToc, surahRangesFromStarts } from "../src/lib/hadith-index.mjs";
 import existing from "../src/data/tafsir-index.mjs";
 import canonicalBookIds from "../src/data/canonical-book-ids.mjs";
-import { assertRobotsAllowed, readCheckpoint, writeCheckpoint } from "./lib/crawl-policy.mjs";
+import { assertRobotsAllowed, checkpointMatches, readCheckpoint, writeCheckpoint } from "./lib/crawl-policy.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT_PATH = resolve(__dirname, "../src/data/tafsir-index.mjs");
@@ -120,7 +120,9 @@ const client = createClient({ text: http.text });
 const index = { generated_at: new Date().toISOString(), books: { ...(existing?.books ?? {}) } };
 let touched = 0;
 let failedTarget = false;
-const checkpoint = RESUME ? readCheckpoint(CHECKPOINT_PATH, { version: 1, books: {} }) : { version: 1, books: {} };
+const emptyCheckpoint = { type: "tafsir", books: {} };
+const checkpoint = RESUME ? readCheckpoint(CHECKPOINT_PATH, emptyCheckpoint, "tafsir") : emptyCheckpoint;
+checkpoint.type = "tafsir";
 const flushCheckpoint = () => writeCheckpoint(CHECKPOINT_PATH, checkpoint);
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => {
   flushCheckpoint();
@@ -148,7 +150,14 @@ for (const ed of targets) {
 
   // 1. TOC-derived starts, merged with previously persisted starts (which may
   //    include page_heading discoveries from an earlier walk).
-  const d = await client.details(bookId);
+  let d;
+  try {
+    d = await client.details(bookId);
+  } catch (error) {
+    failedTarget = true;
+    console.error(`   ✖ could not load book details: ${error.message}`);
+    continue;
+  }
   const starts = surahStartsFromToc(d.toc ?? []);
   for (const [s, r] of Object.entries(prev.surahs ?? {})) {
     const n = Number(s);
@@ -160,7 +169,14 @@ for (const ed of targets) {
 
   // Last page of the book (from any page's nav).
   const firstStart = [...starts.values()].map((v) => Number(v.page)).sort((a, b) => a - b)[0] ?? 1;
-  const probe = await client.bookPage(bookId, firstStart);
+  let probe;
+  try {
+    probe = await client.bookPage(bookId, firstStart);
+  } catch (error) {
+    failedTarget = true;
+    console.error(`   ✖ could not probe book navigation: ${error.message}`);
+    continue;
+  }
   const lastPage = Number(probe.nav?.last ?? prev.last_page ?? 0);
   if (!Number.isSafeInteger(lastPage) || lastPage < 1) {
     failedTarget = true;
@@ -171,32 +187,46 @@ for (const ed of targets) {
   const ayahs = { ...(prev.ayahs ?? {}) };
 
   // 2. Sequential walk.
+  let completedWalkRange = null;
   if (!RANGES_ONLY) {
-    let walkFrom = FROM || firstStart;
-    let walkTo = TO || lastPage;
+    let requestedFrom = FROM || firstStart;
+    let requestedTo = TO || lastPage;
     if (SURAHS_NUMBERS.length) {
       const ranges = surahRangesFromStarts(starts, lastPage);
-      const sel = SURAHS_NUMBERS.map((n) => ranges[String(n)]).filter(Boolean);
-      if (!sel.length) {
+      const selectedRanges = SURAHS_NUMBERS.map((n) => ranges[String(n)]).filter(Boolean);
+      if (!selectedRanges.length) {
         failedTarget = true;
         console.error(`   ✖ none of --surah=${SURAHS_NUMBERS.join(",")} has a known start yet`);
         continue;
       }
-      walkFrom = Math.min(...sel.map((r) => Number(r.start)));
-      walkTo = Math.max(...sel.map((r) => Number(r.end)));
+      requestedFrom = Math.min(...selectedRanges.map((range) => Number(range.start)));
+      requestedTo = Math.max(...selectedRanges.map((range) => Number(range.end)));
     }
-    if (RESUME && checkpoint.books[bookId]?.next_page) walkFrom = Math.max(walkFrom, Number(checkpoint.books[bookId].next_page));
-    if (walkFrom < 1 || walkFrom > walkTo || walkTo > lastPage) {
+    if (requestedFrom < 1 || requestedFrom > requestedTo || requestedTo > lastPage) {
       failedTarget = true;
-      console.error(`   ✖ invalid page range ${walkFrom}..${walkTo}; book pages run from 1 to ${lastPage}`);
+      console.error(`   ✖ invalid page range ${requestedFrom}..${requestedTo}; book pages run from 1 to ${lastPage}`);
       continue;
     }
-    const requestedPages = walkTo - walkFrom + 1;
+    const requestedPages = requestedTo - requestedFrom + 1;
     if (requestedPages > MAX_PAGES) {
       failedTarget = true;
       console.error(`   ✖ requested ${requestedPages} pages exceeds --max-pages=${MAX_PAGES}; split the range explicitly.`);
       continue;
     }
+    const savedState = checkpoint.books[bookId];
+    const selector = SURAHS_NUMBERS.join(",");
+    const compatibleState = checkpointMatches(savedState, { from: requestedFrom, to: requestedTo, surahs: selector });
+    if (savedState && !compatibleState) {
+      console.warn(`   ! ignoring incompatible checkpoint for ${bookId}; requested pages ${requestedFrom}..${requestedTo}`);
+      delete checkpoint.books[bookId];
+      flushCheckpoint();
+    }
+    const savedNext = compatibleState ? Number(savedState.next_page) : requestedFrom;
+    const walkFrom = RESUME && Number.isSafeInteger(savedNext) && savedNext >= requestedFrom && savedNext <= requestedTo + 1
+      ? savedNext
+      : requestedFrom;
+    const walkTo = requestedTo;
+    const checkpointState = (nextPage) => ({ from: requestedFrom, to: requestedTo, surahs: selector, next_page: nextPage });
     console.log(`   walking pages ${walkFrom}..${walkTo} (delay ${DELAY_MS} ms)`);
 
     let page = walkFrom;
@@ -210,7 +240,7 @@ for (const ed of targets) {
         pd = await client.bookPage(bookId, page);
       } catch (e) {
         failedTarget = true;
-        checkpoint.books[bookId] = { next_page: page, walk_to: walkTo };
+        checkpoint.books[bookId] = checkpointState(page);
         flushCheckpoint();
         console.error(`   ! page ${page}: ${e.message} — stopping walk here (resume with --resume)`);
         break;
@@ -263,13 +293,14 @@ for (const ed of targets) {
       const next = Number(pd.nav?.next ?? 0);
       page = next && next > page ? next : page + 1;
       if (walked % CHECKPOINT_EVERY === 0) {
-        checkpoint.books[bookId] = { next_page: page, walk_to: walkTo };
+        checkpoint.books[bookId] = checkpointState(page);
         flushCheckpoint();
       }
       if (page > lastPage) break;
       await sleep(DELAY_MS);
     }
     if (page > walkTo) {
+      completedWalkRange = [requestedFrom, requestedTo];
       delete checkpoint.books[bookId];
       flushCheckpoint();
     }
@@ -303,11 +334,22 @@ for (const ed of targets) {
   );
   const prevSurahCount = Object.keys(prev.surahs ?? {}).length;
   if (Object.keys(surahs).length !== prevSurahCount || String(lastPage) !== String(prev.last_page ?? "")) touched += 1;
+  const coveredPages = [...(Array.isArray(prev.covered_pages) ? prev.covered_pages : [])];
+  if (completedWalkRange) coveredPages.push(completedWalkRange);
+  coveredPages.sort((a, b) => Number(a[0]) - Number(b[0]));
+  const mergedCoveredPages = [];
+  for (const [start, end] of coveredPages) {
+    const previous = mergedCoveredPages.at(-1);
+    if (previous && Number(start) <= Number(previous[1]) + 1) previous[1] = Math.max(Number(previous[1]), Number(end));
+    else mergedCoveredPages.push([Number(start), Number(end)]);
+  }
+  if (JSON.stringify(mergedCoveredPages) !== JSON.stringify(prev.covered_pages ?? [])) touched += 1;
   index.books[bookId] = {
     type: "tafsir",
     ...(ed.key ? { key: ed.key } : {}),
     ...(ed.title || d.title ? { title: ed.title ?? d.title } : {}),
     last_page: String(lastPage),
+    covered_pages: mergedCoveredPages,
     source: `scripts/build-tafsir-index.mjs — TOC of shamela.ws/book/${bookId} + sequential page walk (in-text surah headings, ﴿…(n)…﴾ ayah brackets). Generated ${index.generated_at}.`,
     surahs,
     ayahs: sortedAyahs,

@@ -64,11 +64,50 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
 
-      - name: Live citation and markup canaries
+      - name: Offline quality gate
+        run: npm run verify
+
+      # These broad canaries cover editions unrelated to the selected slice and
+      # may be rate-limited independently. Keep their diagnostics without
+      # allowing an unrelated transient 403 to cancel the authoritative build.
+      - name: Live citation and markup canaries (diagnostic)
+        id: live-canaries
+        continue-on-error: true
         run: npm run test:live
 
-      - name: Verify canonical whitelist against live shamela.ws
+      - name: Verify canonical whitelist against live shamela.ws (diagnostic)
+        id: canonical-canaries
+        continue-on-error: true
         run: node scripts/resolve-canonical-editions.mjs
+
+      - name: Compute checkpoint identity
+        id: checkpoint
+        env:
+          BOOK: ${{ inputs.book || '1681' }}
+          FROM: ${{ inputs.from || '1' }}
+          TO: ${{ inputs.to || 'edition-end' }}
+          STEP: ${{ inputs.step || '1' }}
+          TAFSIR: ${{ inputs.tafsir || 'none' }}
+          TAFSIR_FROM: ${{ inputs.tafsir_from || '1' }}
+          TAFSIR_TO: ${{ inputs.tafsir_to || '1000' }}
+        run: |
+          set -euo pipefail
+          for value in "$BOOK" "$FROM" "$STEP" "$TAFSIR_FROM" "$TAFSIR_TO"; do
+            [[ "$value" =~ ^[0-9]+$ ]] || { echo "Checkpoint identity inputs must be numeric" >&2; exit 1; }
+          done
+          [[ "$TO" == "edition-end" || "$TO" =~ ^[0-9]+$ ]] || { echo "Invalid hadith end" >&2; exit 1; }
+          [[ "$TAFSIR" == "none" || "$TAFSIR" =~ ^[0-9]+$ ]] || { echo "Invalid tafsir id" >&2; exit 1; }
+          echo "scope=hadith-${BOOK}-${FROM}-${TO}-${STEP}_tafsir-${TAFSIR}-${TAFSIR_FROM}-${TAFSIR_TO}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore compatible resumable checkpoints
+        uses: actions/cache/restore@v5.0.3
+        with:
+          path: |
+            .hadith-index.checkpoint.json
+            .tafsir-index.checkpoint.json
+          key: citation-index-${{ steps.checkpoint.outputs.scope }}-${{ github.sha }}-${{ github.run_id }}
+          restore-keys: |
+            citation-index-${{ steps.checkpoint.outputs.scope }}-${{ github.sha }}-
 
       - name: Build hadith index
         if: ${{ github.event_name == 'schedule' || inputs.book != '' }}
@@ -91,15 +130,34 @@ jobs:
           TAFSIR_TO: ${{ inputs.tafsir_to || '1000' }}
         run: node scripts/build-tafsir-index.mjs --tafsir "$TAFSIR" --from="$TAFSIR_FROM" --to="$TAFSIR_TO" --max-pages=1000 --timeout=20000 --checkpoint=.tafsir-index.checkpoint.json --resume --delay=400
 
-      - name: Preserve resumable checkpoints
+      - name: Preserve resumable checkpoints for later runs
+        if: ${{ always() }}
+        uses: actions/cache/save@v5.0.3
+        with:
+          path: |
+            .hadith-index.checkpoint.json
+            .tafsir-index.checkpoint.json
+          key: citation-index-${{ steps.checkpoint.outputs.scope }}-${{ github.sha }}-${{ github.run_id }}
+
+      - name: Upload checkpoints for inspection
         if: ${{ always() }}
         uses: actions/upload-artifact@v6.0.0
         with:
-          name: citation-index-checkpoints
+          name: citation-index-checkpoints-${{ github.run_id }}
           if-no-files-found: ignore
           path: |
             .hadith-index.checkpoint.json
             .tafsir-index.checkpoint.json
+
+      - name: Upstream diagnostic summary
+        if: ${{ always() }}
+        run: |
+          {
+            echo "### Upstream diagnostics"
+            echo "- Live canaries: ${{ steps.live-canaries.outcome }}"
+            echo "- Canonical whitelist canaries: ${{ steps.canonical-canaries.outcome }}"
+            echo "- These checks are diagnostic; the selected index build remains authoritative."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Validate generated index (schema, canonical ids, Quran bounds, regression)
         run: npm run validate:index

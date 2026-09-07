@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { Readable } from "node:stream";
 import { authorize, presentedKey, safeEqual, stripApiKeyFromUrl } from "../src/lib/auth.mjs";
+import { MAX_REQUEST_BYTES, readRequestBody, server } from "../server.mjs";
 import worker from "../src/index.mjs";
 
 const req = (url, init = {}) => new Request(url, init);
@@ -41,6 +43,39 @@ test("authorize: secret configured → key required and must match", () => {
     credential_source: "query",
     deprecated: true,
   });
+});
+
+test("local server request reader enforces a bounded body", async () => {
+  const accepted = await readRequestBody(Readable.from([Buffer.from("ok")]));
+  assert.equal(accepted.toString(), "ok");
+  await assert.rejects(
+    readRequestBody(Readable.from([Buffer.alloc(MAX_REQUEST_BYTES), Buffer.from("x")])),
+    (error) => error?.statusCode === 413 && error?.message === "request_too_large",
+  );
+});
+
+test("local tool endpoint enforces API-key auth and body limits", async () => {
+  const previousKey = process.env.MCP_API_KEY;
+  process.env.MCP_API_KEY = "local-secret";
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+  try {
+    const denied = await fetch(`http://127.0.0.1:${port}/api/call-tool`, { method: "POST", body: "{}" });
+    assert.equal(denied.status, 401);
+    assert.equal((await denied.json()).error, "unauthorized");
+
+    const oversized = await fetch(`http://127.0.0.1:${port}/api/call-tool`, {
+      method: "POST",
+      headers: { Authorization: "Bearer local-secret" },
+      body: Buffer.alloc(MAX_REQUEST_BYTES + 1),
+    });
+    assert.equal(oversized.status, 413);
+    assert.equal((await oversized.json()).error, "request_too_large");
+  } finally {
+    await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    if (previousKey === undefined) delete process.env.MCP_API_KEY;
+    else process.env.MCP_API_KEY = previousKey;
+  }
 });
 
 test("worker: CORS preflight is always open and advertises Authorization", async () => {

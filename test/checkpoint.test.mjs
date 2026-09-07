@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { tmpdir } from "node:os";
 import {
   validateCheckpoint,
+  checkpointMatches,
   readCheckpoint,
   writeCheckpoint,
   resetCheckpoint,
@@ -41,6 +42,13 @@ test("validateCheckpoint: rejects non-objects, arrays, bad versions, and non-num
   assert.equal(validateCheckpoint({ version: 2, books: { "1681": "invalid-state" } }), false);
 });
 
+test("checkpointMatches: rejects checkpoints from a different target slice", () => {
+  const state = { from: 1, to: 100, step: 1, next_number: 51 };
+  assert.equal(checkpointMatches(state, { from: 1, to: 100, step: 1 }), true);
+  assert.equal(checkpointMatches(state, { from: 101, to: 200, step: 1 }), false);
+  assert.equal(checkpointMatches(null, { from: 1 }), false);
+});
+
 test("readCheckpoint: reads valid checkpoint and safely falls back on corrupt/invalid file", () => {
   const scratchDir = mkdtempSync(resolve(tmpdir(), "shamela-cp-test-"));
   const cpPath = resolve(scratchDir, "checkpoint.json");
@@ -60,6 +68,7 @@ test("readCheckpoint: reads valid checkpoint and safely falls back on corrupt/in
     assert.equal(existsSync(cpPath), true);
     const loaded = readCheckpoint(cpPath, fallback, "tafsir");
     assert.equal(loaded.version, CHECKPOINT_VERSION);
+    assert.equal(loaded.type, "tafsir");
     assert.equal(loaded.books["8473"].next_page, 500);
 
     // Corrupt JSON file

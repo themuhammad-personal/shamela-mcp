@@ -70,6 +70,22 @@ test("builder limit and checkpoint options are validated offline", () => {
   }
 });
 
+test("refresh orchestrator rejects unsupported modes and unknown targets", () => {
+  const badMode = run("orchestrate-refresh.mjs", "--mode=invalid", "--dry-run");
+  assert.notEqual(badMode.status, 0);
+  assert.match(badMode.stderr, /Unsupported --mode/);
+
+  const unknownBook = run("orchestrate-refresh.mjs", "--mode=hadith", "--book=999999", "--dry-run");
+  assert.notEqual(unknownBook.status, 0);
+  assert.match(unknownBook.stderr, /Unknown or inactive hadith target/);
+});
+
+test("refresh orchestrator dry-run reports bounded next chunks", () => {
+  const result = run("orchestrate-refresh.mjs", "--mode=hadith", "--book=1681", "--dry-run");
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /numbers 1\.\.100/);
+});
+
 test("validate-index runs fully offline against the current committed data and passes", () => {
   const scratchDir = mkdtempSync(resolve(tmpdir(), "shamela-index-validation-"));
   try {

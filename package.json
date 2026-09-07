@@ -6,8 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "node server.mjs",
-    "build": "node --check server.mjs src/index.mjs",
-    "lint": "node --check server.mjs src/index.mjs src/tools.mjs",
+    "build": "node --check server.mjs && node --check src/index.mjs && node --check src/tools.mjs",
+    "lint": "node --check server.mjs && for file in src/*.mjs src/lib/*.mjs src/data/*.mjs scripts/*.mjs scripts/lib/*.mjs test/*.test.mjs; do node --check \"$file\" || exit 1; done",
     "start": "node server.mjs",
     "test": "node --test test/*.test.mjs",
     "test:live": "SHAMELA_LIVE_TESTS=1 node --test test/live.test.mjs",

@@ -43,6 +43,11 @@ export function validateCheckpoint(data, expectedType = null) {
   return true;
 }
 
+export function checkpointMatches(state, expected) {
+  if (!state || typeof state !== "object" || Array.isArray(state)) return false;
+  return Object.entries(expected).every(([key, value]) => String(state[key] ?? "") === String(value ?? ""));
+}
+
 export function readCheckpoint(path, fallback, expectedType = null) {
   try {
     if (!existsSync(path)) return fallback;
@@ -62,10 +67,10 @@ export function readCheckpoint(path, fallback, expectedType = null) {
 export function writeCheckpoint(path, value) {
   const tmpPath = `${path}.tmp.${process.pid}.${Date.now()}`;
   const payload = {
+    ...(value ?? {}),
     version: CHECKPOINT_VERSION,
     schema: "shamela-mcp-checkpoint",
     updated_at: new Date().toISOString(),
-    ...(value ?? {}),
   };
   writeFileSync(tmpPath, `${JSON.stringify(payload, null, 2)}\n`);
   renameSync(tmpPath, path);

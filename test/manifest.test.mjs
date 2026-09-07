@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { loadManifest, validateManifestStructure, evaluateCoverage } from "../scripts/lib/refresh-manifest.mjs";
+import { loadManifest, validateManifestStructure, evaluateCoverage, nextUncoveredRange } from "../scripts/lib/refresh-manifest.mjs";
 
 test("loadManifest: loads and validates refresh-manifest.json successfully", () => {
   const manifest = loadManifest();
@@ -13,6 +13,14 @@ test("validateManifestStructure: catches malformed targets", () => {
   assert.throws(() => validateManifestStructure(null), /Manifest must be an object/);
   assert.throws(() => validateManifestStructure({}), /hadith_targets/);
   assert.throws(() => validateManifestStructure({ hadith_targets: [], tafsir_targets: [{ book_id: "8473", surah_count: 50 }] }), /114 surahs/);
+});
+
+test("nextUncoveredRange: advances past merged completed chunks and finds gaps", () => {
+  assert.deepEqual(nextUncoveredRange(350, 100, []), { from: 1, to: 100 });
+  assert.deepEqual(nextUncoveredRange(350, 100, [[1, 100], [101, 200]]), { from: 201, to: 300 });
+  assert.deepEqual(nextUncoveredRange(350, 100, [[101, 200], [1, 50]]), { from: 51, to: 100 });
+  assert.equal(nextUncoveredRange(200, 100, [[1, 200]]), null);
+  assert.throws(() => nextUncoveredRange(0, 100), /Range bounds/);
 });
 
 test("evaluateCoverage: computes percentages and completion state accurately", () => {
