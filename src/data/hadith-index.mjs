@@ -16,19 +16,19 @@
  *   }
  */
 export default {
-  "generated_at": "2026-09-05T00:00:00.000Z",
+  "generated_at": "2026-09-07T11:44:31.604Z",
   "books": {
     "1681": {
       "type": "hadith",
       "key": "sahih-al-bukhari",
       "coverage": "partial",
       "index": {
-        "1": { "page": "1", "verified": true },
+        "1": { "page": "10", "verified": true },
         "8": { "page": "19", "verified": true },
         "7563": { "page": "11208", "verified": true }
       },
       "reverse": {
-        "1": ["1"],
+        "10": ["1"],
         "19": ["8"],
         "11208": ["7563"]
       }

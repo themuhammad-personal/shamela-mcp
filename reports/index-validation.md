@@ -1,6 +1,6 @@
 # Citation index validation report
 
-Generated `2026-09-06T15:28:12.378Z` by `scripts/validate-index.mjs`.
+Generated `2026-09-07T11:44:43.236Z` by `scripts/validate-index.mjs`.
 
 **Status:** ✅ passed
 

@@ -4,3 +4,5 @@ node_modules/
 *.log
 .DS_Store
 .env
+.hadith-index.checkpoint.json
+.tafsir-index.checkpoint.json

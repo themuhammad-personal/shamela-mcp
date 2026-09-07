@@ -11,6 +11,7 @@ import {
   indexStatus,
 } from "../src/lib/hadith-index.mjs";
 import shippedTafsirIndex from "../src/data/tafsir-index.mjs";
+import shippedHadithIndex from "../src/data/hadith-index.mjs";
 import { AYAH_COUNTS } from "../src/lib/citation-detect.mjs";
 
 const fixture = {
@@ -86,6 +87,23 @@ test("resolveHadith: unindexed book → found:false", () => {
 test("hadithNumbersOnPage reverse lookup", () => {
   assert.deepEqual(hadithNumbersOnPage("111", "25", fixture), ["8"]);
   assert.deepEqual(hadithNumbersOnPage("111", "nope", fixture), []);
+});
+
+// Regression for a real seed-data bug found live: the shipped index once had
+// Bukhari (1681) hadith #1 pointing at page "1" -- which is actually al-Azhar
+// sheikh Hasuna al-Nawawi's printing-approval certificate, not hadith text at
+// all (confirmed live: zero hadith markers on that page; the real #1 opens on
+// page "10", confirmed both by shamela's own specialnumber2id AND by an
+// on-page «١ - …» marker). Because search_library's hadith_numbers enrichment
+// (hadithNumbersOnPage) trusts this reverse map WITHOUT live re-verification
+// -- unlike get_hadith_by_number, which always re-checks live -- a stale
+// entry here would have made search_library assert a hadith number on a page
+// that never carried one, which is exactly the fabrication this project's
+// error philosophy exists to prevent. This locks the corrected mapping in.
+test("shipped hadith index: Bukhari #1 points at its real page (regression, live-verified 2026-09-07)", () => {
+  assert.deepEqual(shippedHadithIndex.books["1681"].index["1"], { page: "10", verified: true });
+  assert.deepEqual(hadithNumbersOnPage("1681", "10", shippedHadithIndex), ["1"]);
+  assert.deepEqual(hadithNumbersOnPage("1681", "1", shippedHadithIndex), [], "page 1 is front matter, not a hadith page");
 });
 
 test("resolveTafsirAyah resolves surah:ayah", () => {
