@@ -266,6 +266,18 @@ export async function resolveTafsirAyahBounded(client, bookId, surah, ayah, { ma
   const start = Number(range.start);
   const end = Number(range.end);
   const parsedBudget = Number(maxFetches);
+  // Kept at 20: measured locally at ~1 fetch/page + one cached details call
+  // (21 total for a full 20-page search), comfortably under Cloudflare's
+  // 50-subrequest-per-invocation cap on its own. Production has still hit
+  // that cap ("Too many subrequests by single Worker invocation") on long
+  // searches — almost certainly because shamela.ws occasionally rate-limits
+  // or challenges requests from Cloudflare's IP ranges, and each such
+  // failure retries (http.mjs's default maxRetries: 2 → up to 3 attempts
+  // per page). Lowering this budget was tried and reverted: it measurably
+  // traded away real precision (more "nearest_before" instead of "exact")
+  // for an unconfirmed safety margin. The actual fix is the try/catch
+  // around the search below — a graceful partial answer instead of a crash
+  // on the rare invocation where the retries do add up.
   const budget = Number.isFinite(parsedBudget) ? Math.max(0, Math.floor(parsedBudget)) : 20;
   if (!budget) {
     return {
@@ -321,6 +333,17 @@ export async function resolveTafsirAyahBounded(client, bookId, surah, ayah, { ma
   // unmarked never need a second look.
   let first = lo.page; // first page not yet known to be unmarked/irrelevant
   let lastShrink = 1; // fraction of the window the previous step removed
+  // A page read can throw mid-search — most notably Cloudflare's own
+  // "Too many subrequests by single Worker invocation" when shamela.ws has
+  // been rate-limiting/challenging this invocation and http.mjs's retries
+  // pushed the fetch count over the platform's per-request cap. Previously
+  // that exception propagated straight out of this function as an opaque
+  // "internal" tool error, discarding whatever the search had already
+  // legitimately established (e.g. a confirmed `lo` anchor). Catching it
+  // here lets the existing fallbacks below report that partial progress
+  // honestly instead of reporting nothing.
+  let interrupted = null;
+  try {
   while (budgetLeft()) {
     const windowStart = Math.max(first, lo.page);
     const windowEnd = hi.page - 1;
@@ -396,26 +419,44 @@ export async function resolveTafsirAyahBounded(client, bookId, surah, ayah, { ma
     }
   }
 
+  } catch (err) {
+    // Swallow here; every branch below already knows how to report partial
+    // progress (or honest absence of any). Re-raising would only turn a
+    // partially-successful search into a hard failure.
+    interrupted = err?.message ? String(err.message).slice(0, 200) : "unknown_error";
+  }
+
+  const interruptedNote = interrupted
+    ? ` অনুসন্ধান একটি platform/network সীমাবদ্ধতায় থেমে গেছে (${interrupted}) — যা পাওয়া গেছে তা-ই নিচে দেওয়া হলো।`
+    : "";
+
   if (!sawAnyMark) {
     return done(start, [], "surah_start", {
-      note: "এই সূরার পৃষ্ঠাগুলোতে ﴿…(n)…﴾ আয়াত-ব্লক নেই (ইবনে কাসীর ফাতিহা inline উদ্ধৃত করেন) — সূরার আলোচনার প্রথম পৃষ্ঠা দেওয়া হল; নির্দিষ্ট আয়াতের পৃষ্ঠা যাচাই করা যায়নি।",
+      note:
+        "এই সূরার পৃষ্ঠাগুলোতে ﴿…(n)…﴾ আয়াত-ব্লক নেই (ইবনে কাসীর ফাতিহা inline উদ্ধৃত করেন) — সূরার আলোচনার প্রথম পৃষ্ঠা দেওয়া হল; নির্দিষ্ট আয়াতের পৃষ্ঠা যাচাই করা যায়নি।" +
+        interruptedNote,
+      ...(interrupted ? { search_interrupted: true } : {}),
     });
   }
   if (lo.marks) {
     const window = Math.max(0, hi.page - 1 - lo.page);
     return done(lo.page, lo.marks, "nearest_before", {
-      note: `আয়াত ${surah}:${ayah}-এর ব্লক ${budget} পৃষ্ঠা পড়ার সীমার মধ্যে পাওয়া যায়নি; এটি সর্বশেষ পৃষ্ঠা যেখানে এর আগের আয়াত (${lo.ayah}) চিহ্নিত — আলোচনা এর পরে, সর্বোচ্চ ${window} পৃষ্ঠার মধ্যে (nav.next)��`,
+      note:
+        `আয়াত ${surah}:${ayah}-এর ব্লক ${budget} পৃষ্ঠা পড়ার সীমার মধ্যে পাওয়া যায়নি; এটি সর্বশেষ পৃষ্ঠা যেখানে এর আগের আয়াত (${lo.ayah}) চিহ্নিত — আলোচনা এর পরে, সর্বোচ্চ ${window} পৃষ্ঠার মধ্যে (nav.next)।` +
+        interruptedNote,
       distance_hint: window,
+      ...(interrupted ? { search_interrupted: true } : {}),
     });
   }
   return {
     found: false,
-    reason: "ayah_not_located_within_budget",
+    reason: interrupted ? "search_interrupted_by_platform_limit" : "ayah_not_located_within_budget",
     book_id: id,
     surah,
     ayah,
     surah_range: { start: range.start, end: range.end },
     pages_fetched: fetches,
+    ...(interrupted ? { search_interrupted: true, interruption_detail: interrupted } : {}),
   };
 }
 

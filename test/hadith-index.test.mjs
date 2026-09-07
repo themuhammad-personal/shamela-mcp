@@ -229,6 +229,32 @@ test("resolveTafsirAyahBounded: first/last ayah of the surah", async () => {
   assert.equal((await resolveTafsirAyahBounded(client, "777", 2, 30, { index: idx })).page, "136");
 });
 
+test("resolveTafsirAyahBounded degrades gracefully instead of throwing when a page read fails mid-search (e.g. Cloudflare's own subrequest cap)", async () => {
+  const { idx, client: realClient } = fakeSurahBook();
+  let calls = 0;
+  // Simulate exactly what production hit: the search makes real progress
+  // (finds a `lo` anchor before ayah 20 on an early probe), then every
+  // further read fails the way Cloudflare's platform limit fails a fetch —
+  // as a thrown error, not a normal per-page not-found.
+  const flakyClient = {
+    bookPage: async (id, p) => {
+      calls += 1;
+      if (calls > 2) throw new Error("Too many subrequests by single Worker invocation.");
+      return realClient.bookPage(id, p);
+    },
+  };
+  const r = await resolveTafsirAyahBounded(flakyClient, "777", 2, 20, { index: idx });
+  // Must not throw, and must not silently claim "exact" or invent a page —
+  // either a labelled partial answer, or an honest found:false.
+  assert.ok(r.search_interrupted, "the interruption must be visible to the caller");
+  if (r.found) {
+    assert.notEqual(r.precision, "exact", "an interrupted search cannot claim exact precision");
+  } else {
+    assert.equal(r.reason, "search_interrupted_by_platform_limit");
+    assert.ok(r.interruption_detail?.includes("subrequests"));
+  }
+});
+
 test("resolveTafsirAyahBounded respects the fetch budget and labels an inexact answer", async () => {
   // 240-page surah, one 3-ayah block every 4 pages → ayah 100 lives on page 100 + 33*4 = 232.
   const { idx, client, fetched } = fakeSurahBook({ end: 100 + 4 * 60 - 1 });

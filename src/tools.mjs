@@ -600,7 +600,9 @@ export function createServer(client = sharedClient) {
           hint:
             res.reason === "no_tafsir_index_for_book"
               ? "এই book_id-র জন্য persisted তাফসির সূচি নেই (বর্তমানে: ইবনে কাসীর 8473, তাবারী 7798, কুরতুবী 20855)। scripts/build-tafsir-index.mjs --tafsir <id> চালিয়ে সূচি তৈরি করুন, অথবা get_book_details → get_book_page ব্যবহার করুন।"
-              : "get_book_details দিয়ে TOC দেখে get_book_page ব্যবহার করুন।",
+              : res.reason === "search_interrupted_by_platform_limit"
+                ? "অনুসন্ধান মাঝপথে থেমেছে (network/platform সীমা) — কিছুক্ষণ পর আবার চেষ্টা করুন, অথবা get_book_details → get_book_page দিয়ে ম্যানুয়ালি খুঁজুন।"
+                : "get_book_details দিয়ে TOC দেখে get_book_page ব্যবহার করুন।",
         });
       }
       const page = await client.bookPage(res.book_id, res.page);
