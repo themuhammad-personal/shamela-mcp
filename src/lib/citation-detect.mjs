@@ -551,8 +551,16 @@ function bracketSegments(text, { first = false, last = false } = {}) {
  * name is resolved instead. Only a short paragraph that IS the heading counts.
  */
 const AYAH_LABEL_RE_STR = "(?:الآيات|الايات|الآية|الاية|آية|اية)";
+// BUGFIX: some pages print this heading with doubled brackets, «[[سورة … : آية
+// ٨٠]]» (confirmed live: shamela.ws/book/20855/482), not just the single
+// «[…]» shown in the doc comment above. `\[?`/`\]?` only ever stripped ONE
+// bracket, so a doubled pair left a stray leading "[" sitting right where
+// "سورة" needed to start, and the whole match failed — which looked exactly
+// like the ayah just wasn't on the page (a "stale index" symptom) when the
+// index's page number was correct all along. `\[*`/`\]*` accept one, two, or
+// zero brackets on either side.
 const AYAH_HEADING_RE = new RegExp(
-  `^\\s*\\[?\\s*(?:سورة\\s+([^\\[\\]():：]{1,40}?)\\s*(?:\\((${DIGITS}{1,3})\\))?\\s*[:：]?\\s*)?${AYAH_LABEL_RE_STR}\\s*[:：]?\\s*(.+?)\\s*\\]?\\s*$`,
+  `^\\s*\\[*\\s*(?:سورة\\s+([^\\[\\]():：]{1,40}?)\\s*(?:\\((${DIGITS}{1,3})\\))?\\s*[:：]?\\s*)?${AYAH_LABEL_RE_STR}\\s*[:：]?\\s*(.+?)\\s*\\]*\\s*$`,
 );
 
 function parseEditorialAyahSpec(specStr, maxCount = 286) {

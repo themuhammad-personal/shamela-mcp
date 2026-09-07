@@ -258,6 +258,13 @@ test("surahFromHeading: Qurtubi 20855 TOC shapes — «براءة», stray «و 
 });
 
 test("ayahHeadingInParagraph / quranBracketAyahsInParagraph: Qurtubi's editorial «[سورة X (n): آية m]» headings (live pages 482 & 7449, 2026-09-03)", () => {
+  // BUGFIX regression: shamela.ws/book/20855/482 actually prints this heading
+  // with DOUBLED brackets and a space before the colon — «[[سورة البقرة (٢) :
+  // آية ٨٠]]» — not the single-bracket form below. The doubled form silently
+  // failed to match (AYAH_HEADING_RE only stripped one bracket on each side),
+  // which looked exactly like a stale/wrong index entry even though the
+  // page number was correct all along.
+  assert.deepEqual(ayahHeadingInParagraph("[[سورة البقرة (٢) : آية ٨٠]]", 2), [80], "doubled brackets, live page 482 format");
   assert.deepEqual(ayahHeadingInParagraph("[سورة البقرة (٢): آية ٨٠]", 2), [80]);
   assert.deepEqual(ayahHeadingInParagraph("[سورة البقرة (٢): الآيات ٨١ إلى ٨٢]", 2), [81, 82]);
   assert.deepEqual(ayahHeadingInParagraph("[سورة الناس (١١٤): الآيات ١ الى ٣]", 114), [1, 2, 3]);

@@ -1,6 +1,6 @@
 # Citation index validation report
 
-Generated `2026-09-05T08:18:52.440Z` by `scripts/validate-index.mjs`.
+Generated `2026-09-06T15:28:12.378Z` by `scripts/validate-index.mjs`.
 
 **Status:** ✅ passed
 
@@ -8,13 +8,13 @@ Generated `2026-09-05T08:18:52.440Z` by `scripts/validate-index.mjs`.
 
 | book_id | total | verified | unverified | previous verified | regression |
 |---|---|---|---|---|---|
-| 829 | 1 | 1 | 0 | n/a | no |
-| 1198 | 1 | 1 | 0 | n/a | no |
-| 1435 | 1 | 1 | 0 | n/a | no |
-| 1681 | 3 | 3 | 0 | n/a | no |
-| 1726 | 1 | 1 | 0 | n/a | no |
-| 1727 | 2 | 2 | 0 | n/a | no |
-| 25794 | 1 | 1 | 0 | n/a | no |
+| 829 | 1 | 1 | 0 | 1 | no |
+| 1198 | 1 | 1 | 0 | 1 | no |
+| 1435 | 1 | 1 | 0 | 1 | no |
+| 1681 | 3 | 3 | 0 | 3 | no |
+| 1726 | 1 | 1 | 0 | 1 | no |
+| 1727 | 2 | 2 | 0 | 2 | no |
+| 25794 | 1 | 1 | 0 | 1 | no |
 
 ## Tafsir index
 

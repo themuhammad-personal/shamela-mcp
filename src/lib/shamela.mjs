@@ -135,6 +135,13 @@ export function createClient({ base = DEFAULT_BASE, text, maxCachedDetails = 200
       chapter: p.chapter,
       chapter_path: p.chapter_path,
       hadith_number_hint: p.hadith_number_hint,
+      // BUGFIX: parseBookPage() has always produced this (see page.mjs and
+      // test/page.test.mjs), but it was dropped when building bookPage()'s
+      // return shape — which silently zeroed out narrator_links everywhere
+      // downstream: hadith-index.mjs's `chunk.narrator_links ?? []` always
+      // fell through to `[]`, so get_hadith_by_number's narrator_links was
+      // always undefined in production, not just in the live test.
+      narrator_links: p.narrator_links,
       nav: p.nav,
       book_title: d.title,
       author: d.author,

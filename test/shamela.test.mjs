@@ -67,6 +67,28 @@ test("bookPage returns content + title/author + structure", async () => {
   assert.deepEqual(p.nav, { prev: null, next: null, last: null });
 });
 
+// Regression test for a real bug: parseBookPage() (page.mjs) has always
+// extracted narrator_links, but bookPage()'s own return object once left
+// the field out of its explicit list, silently dropping it for every
+// caller downstream (hadith-index.mjs's `chunk.narrator_links ?? []`
+// swallowed the loss as an empty array, so get_hadith_by_number's
+// narrator_links was always undefined in production). This asserts the
+// field survives the full client.bookPage() call, not just parseBookPage()
+// in isolation (which test/page.test.mjs already covers).
+test("bookPage does not drop narrator_links from parseBookPage()'s output", async () => {
+  const pageWithNarrator = `<div class="nass">حَدَّثَنَا <a href="/narrator/999">فُلَانُ بْنُ فُلَانٍ</a> ، قَالَ: ...</div><div class="next">`;
+  const c = createClient({
+    text: fakeText({
+      "https://shamela.ws/book/123/1": pageWithNarrator,
+      "https://shamela.ws/book/123": BOOK_DETAILS,
+    }),
+  });
+  const p = await c.bookPage("123", "1");
+  assert.equal(p.narrator_links?.length, 1, "narrator_links must reach bookPage()'s return value");
+  assert.equal(p.narrator_links[0].narrator_id, "999");
+  assert.equal(p.narrator_links[0].url, "https://shamela.ws/narrator/999");
+});
+
 test("details: new-layout بطاقة الكتاب (text before div.betaka-index) is parsed too", async () => {
   const html = `
     <h1 class="size-20"><a href="https://shamela.ws/book/1681">كتاب صحيح البخاري - ط السلطانية</a></h1>

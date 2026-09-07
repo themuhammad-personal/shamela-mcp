@@ -5,43 +5,57 @@
       "book_id": "829",
       "total": 1,
       "verified": 1,
-      "unverified": 0
+      "unverified": 0,
+      "previous_verified": 1,
+      "regression": false
     },
     "1198": {
       "book_id": "1198",
       "total": 1,
       "verified": 1,
-      "unverified": 0
+      "unverified": 0,
+      "previous_verified": 1,
+      "regression": false
     },
     "1435": {
       "book_id": "1435",
       "total": 1,
       "verified": 1,
-      "unverified": 0
+      "unverified": 0,
+      "previous_verified": 1,
+      "regression": false
     },
     "1681": {
       "book_id": "1681",
       "total": 3,
       "verified": 3,
-      "unverified": 0
+      "unverified": 0,
+      "previous_verified": 3,
+      "regression": false
     },
     "1726": {
       "book_id": "1726",
       "total": 1,
       "verified": 1,
-      "unverified": 0
+      "unverified": 0,
+      "previous_verified": 1,
+      "regression": false
     },
     "1727": {
       "book_id": "1727",
       "total": 2,
       "verified": 2,
-      "unverified": 0
+      "unverified": 0,
+      "previous_verified": 2,
+      "regression": false
     },
     "25794": {
       "book_id": "25794",
       "total": 1,
       "verified": 1,
-      "unverified": 0
+      "unverified": 0,
+      "previous_verified": 1,
+      "regression": false
     }
   },
   "tafsir": {
@@ -69,5 +83,5 @@
   },
   "errors": [],
   "warnings": [],
-  "generated_at": "2026-09-05T08:18:52.440Z"
+  "generated_at": "2026-09-06T15:28:12.378Z"
 }
