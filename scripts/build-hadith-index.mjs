@@ -36,7 +36,7 @@ import { createClient } from "../src/lib/shamela.mjs";
 import { detectHadithMarkers } from "../src/lib/citation-detect.mjs";
 import existingIndex from "../src/data/hadith-index.mjs";
 import canonicalBookIds from "../src/data/canonical-book-ids.mjs";
-import { assertRobotsAllowed, readCheckpoint, writeCheckpoint } from "./lib/crawl-policy.mjs";
+import { assertRobotsAllowed, checkpointMatches, readCheckpoint, writeCheckpoint } from "./lib/crawl-policy.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT_PATH = resolve(__dirname, "../src/data/hadith-index.mjs");
@@ -140,7 +140,10 @@ let newEntries = 0;
 let attemptedLookup = false;
 let skippedTarget = false;
 let targetWithRange = false;
-const checkpoint = RESUME ? readCheckpoint(CHECKPOINT_PATH, { version: 1, books: {} }) : { version: 1, books: {} };
+let metadataChanged = false;
+const emptyCheckpoint = { type: "hadith", books: {} };
+const checkpoint = RESUME ? readCheckpoint(CHECKPOINT_PATH, emptyCheckpoint, "hadith") : emptyCheckpoint;
+checkpoint.type = "hadith";
 const flushCheckpoint = () => writeCheckpoint(CHECKPOINT_PATH, checkpoint);
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => {
   flushCheckpoint();
@@ -165,14 +168,35 @@ for (const ed of hadithTargets) {
   const prev = index.books[bookId]?.type === "hadith" ? index.books[bookId] : { type: "hadith", index: {}, reverse: {} };
   const forward = { ...prev.index };
   const reverse = Object.fromEntries(Object.entries(prev.reverse ?? {}).map(([k, v]) => [k, [...v]]));
-  const saved = checkpoint.books[bookId]?.claims ?? {};
-  const pageNumbers = new Map(Object.entries(saved).map(([page, nums]) => [page, new Set(nums)]));
+  const savedState = checkpoint.books[bookId];
+  const compatibleState = checkpointMatches(savedState, { from: FROM, to, step: STEP });
+  if (savedState && !compatibleState) {
+    console.warn(`   ! ignoring incompatible checkpoint for ${bookId}; requested ${FROM}..${to} step ${STEP}`);
+    delete checkpoint.books[bookId];
+    flushCheckpoint();
+  }
+  const savedClaims = compatibleState && savedState.claims && typeof savedState.claims === "object" ? savedState.claims : {};
+  const pageNumbers = new Map(Object.entries(savedClaims).map(([page, nums]) => [page, new Set(Array.isArray(nums) ? nums.map(String) : [])]));
   let missing = 0;
   let processed = 0;
   let targetFailed = false;
 
+  const checkpointState = (nextNumber) => ({
+    from: FROM,
+    to,
+    step: STEP,
+    next_number: nextNumber,
+    claims: Object.fromEntries([...pageNumbers].map(([page, nums]) => [page, [...nums]])),
+  });
   const claimed = new Set([...pageNumbers.values()].flatMap((nums) => [...nums]));
-  const resumeFrom = RESUME && checkpoint.books[bookId]?.next_number ? Number(checkpoint.books[bookId].next_number) : FROM;
+  const savedNext = compatibleState ? Number(savedState.next_number) : FROM;
+  const resumeFrom = RESUME
+    && Number.isSafeInteger(savedNext)
+    && savedNext >= FROM
+    && savedNext <= to + STEP
+    && (savedNext - FROM) % STEP === 0
+    ? savedNext
+    : FROM;
   for (let n = resumeFrom; n <= to; n += STEP) {
     if (forward[n]?.verified || claimed.has(String(n))) continue;
     attemptedLookup = true;
@@ -181,24 +205,27 @@ for (const ed of hadithTargets) {
       page = await client.hadithPageId(bookId, n);
     } catch (e) {
       targetFailed = true;
-      checkpoint.books[bookId] = { from: FROM, to, step: STEP, next_number: n, claims: Object.fromEntries([...pageNumbers].map(([p, nums]) => [p, [...nums]])) };
+      checkpoint.books[bookId] = checkpointState(n);
       flushCheckpoint();
       console.error(`   ! ${n}: ${e.message} — stopping this slice; resume with --resume`);
       break;
     }
+    processed += 1;
     if (!page) {
       missing += 1;
-      continue;
+    } else {
+      if (!pageNumbers.has(page)) pageNumbers.set(page, new Set());
+      pageNumbers.get(page).add(String(n));
     }
-    if (!pageNumbers.has(page)) pageNumbers.set(page, new Set());
-    pageNumbers.get(page).add(String(n));
-    processed += 1;
-    if (processed % CHECKPOINT_EVERY === 0) {
-      checkpoint.books[bookId] = { from: FROM, to, step: STEP, claims: Object.fromEntries([...pageNumbers].map(([p, nums]) => [p, [...nums]])) };
-      flushCheckpoint();
-    }
+    checkpoint.books[bookId] = checkpointState(n + STEP);
+    if (processed % CHECKPOINT_EVERY === 0) flushCheckpoint();
     if (n % 100 === 0) console.log(`   … ${n}/${to} (${pageNumbers.size} pages so far)`);
     await sleep(DELAY_MS);
+  }
+
+  if (!targetFailed) {
+    checkpoint.books[bookId] = checkpointState(to + STEP);
+    flushCheckpoint();
   }
 
   // Verify on-page and build maps.
@@ -209,8 +236,11 @@ for (const ed of hadithTargets) {
     try {
       pd = await client.bookPage(bookId, page);
     } catch (e) {
-      console.error(`   ! page ${page}: ${e.message}`);
-      continue;
+      targetFailed = true;
+      checkpoint.books[bookId] = checkpointState(to + STEP);
+      flushCheckpoint();
+      console.error(`   ! page ${page}: ${e.message} — verification incomplete; resume with --resume`);
+      break;
     }
     const onPage = new Set(detectHadithMarkers(pd.paragraphs).map((m) => m.number));
     for (const n of nums) {
@@ -229,7 +259,17 @@ for (const ed of hadithTargets) {
     console.error(`   ✖ ${bookId}: incomplete slice; verified data was not written`);
     continue;
   }
-  index.books[bookId] = { type: "hadith", ...(ed.key ? { key: ed.key } : {}), coverage: STEP === 1 && FROM === 1 && to === ed.last_number ? "complete" : "partial", index: forward, reverse };
+  const coveredRanges = [...(Array.isArray(prev.covered_ranges) ? prev.covered_ranges : [])];
+  if (STEP === 1) coveredRanges.push([FROM, to]);
+  coveredRanges.sort((a, b) => Number(a[0]) - Number(b[0]));
+  const mergedRanges = [];
+  for (const [start, end] of coveredRanges) {
+    const previous = mergedRanges.at(-1);
+    if (previous && Number(start) <= Number(previous[1]) + 1) previous[1] = Math.max(Number(previous[1]), Number(end));
+    else mergedRanges.push([Number(start), Number(end)]);
+  }
+  if (JSON.stringify(mergedRanges) !== JSON.stringify(prev.covered_ranges ?? [])) metadataChanged = true;
+  index.books[bookId] = { type: "hadith", ...(ed.key ? { key: ed.key } : {}), coverage: STEP === 1 && FROM === 1 && to === ed.last_number ? "complete" : "partial", covered_ranges: mergedRanges, index: forward, reverse };
   delete checkpoint.books[bookId];
   flushCheckpoint();
   console.log(`   ✔ ${verified} verified, ${unverified} unverified (kept with note), ${missing} numbers not found by shamela`);
@@ -242,7 +282,7 @@ if (skippedTarget) {
   console.error("✖ One or more targets had no valid index range; no file was written.");
   process.exit(1);
 }
-if (!newEntries && !FORCE) {
+if (!newEntries && !metadataChanged && !FORCE) {
   if (targetWithRange && !attemptedLookup && !skippedTarget) {
     console.log("✔ No new entries — existing index is already complete; nothing to write.");
     process.exit(0);

@@ -11,7 +11,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import hadithIndex from "../src/data/hadith-index.mjs";
 import tafsirIndex from "../src/data/tafsir-index.mjs";
-import { loadManifest, evaluateCoverage } from "./lib/refresh-manifest.mjs";
+import { loadManifest, evaluateCoverage, nextUncoveredRange } from "./lib/refresh-manifest.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, "..");
@@ -22,8 +22,35 @@ const rawOpt = (name) => args.find((a) => a.startsWith(`--${name}=`))?.slice(nam
 const MODE = rawOpt("mode") || "all";
 const TARGET_BOOK = rawOpt("book");
 const TARGET_TAFSIR = rawOpt("tafsir");
+const allowedModes = new Set(["all", "hadith", "tafsir"]);
+if (!allowedModes.has(MODE)) {
+  console.error(`✖ Unsupported --mode=${MODE}; expected all, hadith, or tafsir.`);
+  process.exit(1);
+}
+if (TARGET_BOOK && !/^\d+$/.test(TARGET_BOOK)) {
+  console.error("✖ --book must be a numeric book id.");
+  process.exit(1);
+}
+if (TARGET_TAFSIR && !/^\d+$/.test(TARGET_TAFSIR)) {
+  console.error("✖ --tafsir must be a numeric book id.");
+  process.exit(1);
+}
 
 const manifest = loadManifest();
+const selectedHadith = MODE === "tafsir" ? [] : TARGET_BOOK
+  ? manifest.hadith_targets.filter((target) => target.book_id === TARGET_BOOK && target.status === "active")
+  : manifest.hadith_targets.filter((target) => target.status === "active");
+const selectedTafsir = MODE === "hadith" ? [] : TARGET_TAFSIR
+  ? manifest.tafsir_targets.filter((target) => target.book_id === TARGET_TAFSIR && target.status === "active")
+  : manifest.tafsir_targets.filter((target) => target.status === "active");
+if (TARGET_BOOK && !selectedHadith.length) {
+  console.error(`✖ Unknown or inactive hadith target: ${TARGET_BOOK}.`);
+  process.exit(1);
+}
+if (TARGET_TAFSIR && !selectedTafsir.length) {
+  console.error(`✖ Unknown or inactive tafsir target: ${TARGET_TAFSIR}.`);
+  process.exit(1);
+}
 const coverage = evaluateCoverage(manifest, hadithIndex, tafsirIndex);
 
 console.log("=== Shamela MCP Index Refresh Orchestrator ===");
@@ -41,21 +68,17 @@ for (const t of coverage.tafsir) {
 
 if (DRY_RUN) {
   console.log("\n--dry-run specified. Planned operations:");
-  if (MODE === "all" || MODE === "hadith") {
-    const targets = TARGET_BOOK
-      ? manifest.hadith_targets.filter((t) => t.book_id === TARGET_BOOK)
-      : manifest.hadith_targets.filter((t) => t.status === "active");
-    for (const t of targets) {
-      console.log(`  - Would crawl hadith book ${t.book_id} (${t.key}) with chunk size ${t.chunk_size}`);
-    }
+  for (const t of selectedHadith) {
+    const range = nextUncoveredRange(t.last_number, t.chunk_size, hadithIndex?.books?.[t.book_id]?.covered_ranges);
+    console.log(range
+      ? `  - Would crawl hadith book ${t.book_id} (${t.key}) numbers ${range.from}..${range.to}`
+      : `  - Hadith book ${t.book_id} (${t.key}) has no uncovered chunks`);
   }
-  if (MODE === "all" || MODE === "tafsir") {
-    const targets = TARGET_TAFSIR
-      ? manifest.tafsir_targets.filter((t) => t.book_id === TARGET_TAFSIR)
-      : manifest.tafsir_targets;
-    for (const t of targets) {
-      console.log(`  - Would crawl tafsir book ${t.book_id} (${t.key}) with chunk pages ${t.chunk_pages}`);
-    }
+  for (const t of selectedTafsir) {
+    const range = nextUncoveredRange(t.last_page, t.chunk_pages, tafsirIndex?.books?.[t.book_id]?.covered_pages);
+    console.log(range
+      ? `  - Would crawl tafsir book ${t.book_id} (${t.key}) pages ${range.from}..${range.to}`
+      : `  - Tafsir book ${t.book_id} (${t.key}) has no uncovered chunks`);
   }
   process.exit(0);
 }
@@ -63,18 +86,20 @@ if (DRY_RUN) {
 // Execution mode
 let failureCount = 0;
 
-if (MODE === "all" || MODE === "hadith") {
-  const targets = TARGET_BOOK
-    ? manifest.hadith_targets.filter((t) => t.book_id === TARGET_BOOK)
-    : manifest.hadith_targets.filter((t) => t.status === "active");
-
-  for (const t of targets) {
-    console.log(`\n>>> Running hadith crawler for ${t.key} (${t.book_id})...`);
+if (selectedHadith.length) {
+  for (const t of selectedHadith) {
+    const range = nextUncoveredRange(t.last_number, t.chunk_size, hadithIndex?.books?.[t.book_id]?.covered_ranges);
+    if (!range) continue;
+    console.log(`\n>>> Running hadith crawler for ${t.key} (${t.book_id}) numbers ${range.from}..${range.to}...`);
     const cmdArgs = [
       resolve(__dirname, "build-hadith-index.mjs"),
       `--book=${t.book_id}`,
-      `--from=1`,
-      `--to=${Math.min(t.last_number, t.chunk_size)}`,
+      `--from=${range.from}`,
+      `--to=${range.to}`,
+      `--max-lookups=${t.chunk_size}`,
+      "--delay=400",
+      "--timeout=20000",
+      `--checkpoint=.hadith-index-${t.book_id}-${range.from}-${range.to}.checkpoint.json`,
       "--resume",
     ];
     const res = spawnSync(process.execPath, cmdArgs, { cwd: rootDir, stdio: "inherit" });
@@ -85,18 +110,20 @@ if (MODE === "all" || MODE === "hadith") {
   }
 }
 
-if (MODE === "all" || MODE === "tafsir") {
-  const targets = TARGET_TAFSIR
-    ? manifest.tafsir_targets.filter((t) => t.book_id === TARGET_TAFSIR)
-    : manifest.tafsir_targets;
-
-  for (const t of targets) {
-    console.log(`\n>>> Running tafsir crawler for ${t.key} (${t.book_id})...`);
+if (selectedTafsir.length) {
+  for (const t of selectedTafsir) {
+    const range = nextUncoveredRange(t.last_page, t.chunk_pages, tafsirIndex?.books?.[t.book_id]?.covered_pages);
+    if (!range) continue;
+    console.log(`\n>>> Running tafsir crawler for ${t.key} (${t.book_id}) pages ${range.from}..${range.to}...`);
     const cmdArgs = [
       resolve(__dirname, "build-tafsir-index.mjs"),
       `--tafsir=${t.book_id}`,
-      "--from=1",
-      `--to=${t.chunk_pages}`,
+      `--from=${range.from}`,
+      `--to=${range.to}`,
+      `--max-pages=${t.chunk_pages}`,
+      "--delay=400",
+      "--timeout=20000",
+      `--checkpoint=.tafsir-index-${t.book_id}-${range.from}-${range.to}.checkpoint.json`,
       "--resume",
     ];
     const res = spawnSync(process.execPath, cmdArgs, { cwd: rootDir, stdio: "inherit" });

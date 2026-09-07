@@ -4,12 +4,45 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import worker from "./src/index.mjs";
 import { createServer, SERVER_VERSION } from "./src/tools.mjs";
+import { authorize, unauthorizedResponse } from "./src/lib/auth.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = 3000;
 const HOST = "0.0.0.0";
+export const MAX_REQUEST_BYTES = 1024 * 1024;
+
+function requestHeaders(headers) {
+  const result = new Headers();
+  for (const [key, value] of Object.entries(headers)) {
+    if (value === undefined) continue;
+    if (Array.isArray(value)) value.forEach((item) => result.append(key, item));
+    else result.set(key, value);
+  }
+  return result;
+}
+
+export async function readRequestBody(request) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > MAX_REQUEST_BYTES) {
+      const error = new Error("request_too_large");
+      error.statusCode = 413;
+      throw error;
+    }
+    chunks.push(chunk);
+  }
+  return chunks.length ? Buffer.concat(chunks) : null;
+}
+
+function sendStandardResponse(response, standardResponse) {
+  response.statusCode = standardResponse.status;
+  standardResponse.headers.forEach((value, key) => response.setHeader(key, value));
+  return standardResponse.text().then((body) => response.end(body));
+}
 
 // Re-use an McpServer instance for inspecting tools and local browser tool execution
 const localMcpServer = createServer();
@@ -55,11 +88,13 @@ const server = http.createServer(async (req, res) => {
 
     // 3. Direct tool execution endpoint for interactive UI explorer
     if (pathname === "/api/call-tool" && req.method === "POST") {
-      const chunks = [];
-      for await (const chunk of req) {
-        chunks.push(chunk);
+      const access = authorize(new Request(url, { method: "POST", headers: requestHeaders(req.headers) }), process.env);
+      if (!access.ok) {
+        await sendStandardResponse(res, unauthorizedResponse(access.reason, { "WWW-Authenticate": 'Bearer realm="shamela-mcp"' }));
+        return;
       }
-      const raw = Buffer.concat(chunks).toString("utf-8");
+      const bodyBuffer = await readRequestBody(req);
+      const raw = bodyBuffer?.toString("utf-8") ?? "";
       let body = {};
       try {
         body = JSON.parse(raw);
@@ -120,26 +155,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     // 5. Delegate all other requests (especially /mcp, OPTIONS, and programmatic GET /) to Cloudflare/Worker entrypoint
-    const headers = new Headers();
-    for (const [k, v] of Object.entries(req.headers)) {
-      if (v === undefined) continue;
-      if (Array.isArray(v)) {
-        for (const item of v) headers.append(k, item);
-      } else {
-        headers.set(k, v);
-      }
-    }
+    const headers = requestHeaders(req.headers);
 
     let bodyBuffer = null;
-    if (req.method !== "GET" && req.method !== "HEAD") {
-      const chunks = [];
-      for await (const chunk of req) {
-        chunks.push(chunk);
-      }
-      if (chunks.length > 0) {
-        bodyBuffer = Buffer.concat(chunks);
-      }
-    }
+    if (req.method !== "GET" && req.method !== "HEAD") bodyBuffer = await readRequestBody(req);
 
     const init = {
       method: req.method,
@@ -169,19 +188,24 @@ const server = http.createServer(async (req, res) => {
     }
     res.end();
   } catch (err) {
-    console.error("Unhandled server error:", err);
+    const status = Number(err.statusCode) || 500;
+    if (status >= 500) console.error("Unhandled server error:", err);
     if (!res.headersSent) {
-      res.statusCode = 500;
+      res.statusCode = status;
       res.setHeader("Content-Type", "application/json; charset=utf-8");
-      res.end(JSON.stringify({ ok: false, error: "server_error", message: err.message }));
+      res.end(JSON.stringify({ ok: false, error: status === 413 ? "request_too_large" : "server_error" }));
     } else {
       res.end();
     }
   }
 });
 
-server.listen(PORT, HOST, () => {
-  console.log(`Shamela MCP server running on http://${HOST}:${PORT}`);
-  console.log(`MCP Endpoint: http://${HOST}:${PORT}/mcp`);
-  console.log(`Health Check: http://${HOST}:${PORT}/api/health`);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  server.listen(PORT, HOST, () => {
+    console.log(`Shamela MCP server running on http://${HOST}:${PORT}`);
+    console.log(`MCP Endpoint: http://${HOST}:${PORT}/mcp`);
+    console.log(`Health Check: http://${HOST}:${PORT}/api/health`);
+  });
+}
+
+export { server };

@@ -30,6 +30,28 @@ export function validateManifestStructure(manifest) {
   }
 }
 
+export function nextUncoveredRange(last, chunkSize, coveredRanges = [], first = 1) {
+  if (![last, chunkSize, first].every(Number.isSafeInteger) || last < first || chunkSize < 1) {
+    throw new Error("Range bounds must be safe positive integers");
+  }
+  const ranges = coveredRanges
+    .filter((range) => Array.isArray(range) && range.length === 2)
+    .map(([from, to]) => [Number(from), Number(to)])
+    .filter(([from, to]) => Number.isSafeInteger(from) && Number.isSafeInteger(to) && from <= to)
+    .sort((a, b) => a[0] - b[0]);
+  let cursor = first;
+  for (const [from, to] of ranges) {
+    if (to < cursor) continue;
+    if (from > cursor) break;
+    cursor = Math.max(cursor, to + 1);
+  }
+  if (cursor > last) return null;
+  const nextCoveredStart = ranges
+    .filter(([from]) => from > cursor)
+    .reduce((minimum, [from]) => Math.min(minimum, from), Number.POSITIVE_INFINITY);
+  return { from: cursor, to: Math.min(last, cursor + chunkSize - 1, nextCoveredStart - 1) };
+}
+
 export function evaluateCoverage(manifest, hadithIndex, tafsirIndex) {
   const hadithCoverage = [];
   for (const target of manifest.hadith_targets) {
