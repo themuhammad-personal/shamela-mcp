@@ -605,7 +605,45 @@ export function createServer(client = sharedClient) {
                 : "get_book_details দিয়ে TOC দেখে get_book_page ব্যবহার করুন।",
         });
       }
-      const page = await client.bookPage(res.book_id, res.page);
+      // This fetch is itself just one more subrequest inside the same
+      // Cloudflare invocation as resolveTafsirAyahBounded()'s own search
+      // (which already tries to degrade gracefully on that platform limit
+      // internally) — so even when the search finished cleanly, THIS call
+      // can still be the one that finally trips the invocation-wide cap,
+      // especially right after a search that used most of the budget.
+      // Confirmed live: 7798/2/255 threw here as a raw, uncaught "Too many
+      // subrequests" error even though resolveTafsirAyahBounded had already
+      // returned a valid `res` (nearest_before, page 1669).
+      let page;
+      try {
+        page = await client.bookPage(res.book_id, res.page);
+      } catch (err) {
+        return response({
+          found: true,
+          book_id: res.book_id,
+          surah: res.surah,
+          ayah: res.ayah,
+          page: res.page,
+          precision: res.precision,
+          source: res.source,
+          verified_on_page: false,
+          verification: unverified("platform_limit_before_verification"),
+          search_interrupted: true,
+          interruption_detail: err?.message ? String(err.message).slice(0, 200) : "unknown_error",
+          index_status: indexStatus(),
+          ...canonicalFields({ book_id: res.book_id }),
+          note:
+            "সূচি থেকে পৃষ্ঠা নম্বর পাওয়া গেছে, কিন্তু network/platform সীমার কারণে বর্তমান পৃষ্ঠার বিষয়বস্তু এনে যাচাই করা যায়নি — তাই passage দেওয়া হলো না। কিছুক্ষণ পর আবার চেষ্টা করুন, অথবা get_book_page দিয়ে সরাসরি এই page নম্বর দেখুন।",
+          citation: {
+            book_id: res.book_id,
+            surah: res.surah,
+            ayah: res.ayah,
+            page: res.page,
+            url: `https://shamela.ws/book/${res.book_id}/${res.page}`,
+            verification: unverified("platform_limit_before_verification"),
+          },
+        });
+      }
       const markedAyahs = detectQuranBracketAyahs(page.paragraphs ?? [], res.surah);
       // The persisted map is a location hint, not proof. Re-check exact answers
       // against the page currently served so a stale map cannot fabricate a

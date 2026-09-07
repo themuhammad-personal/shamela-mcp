@@ -236,6 +236,34 @@ test("get_tafsir_by_ayah: indexed ayah is answered from the persisted index with
   assert.deepEqual(d.citation.verification, d.verification);
 });
 
+test("get_tafsir_by_ayah: the final content fetch can itself trip Cloudflare's subrequest cap after a successful resolve — must degrade, not crash", async () => {
+  // Regression for a real production crash: 7798/2/255 (and 20855/2/255)
+  // both threw a raw, uncaught "Too many subrequests by single Worker
+  // invocation" error from THIS specific fetch — the one AFTER
+  // resolveTafsirAyah{,Bounded} already succeeded — because it's just one
+  // more subrequest inside the same Cloudflare invocation as whatever
+  // search (or index lookup) came before it.
+  const srv = createServer(
+    mockClient({
+      bookPage: async () => {
+        throw new Error("Too many subrequests by single Worker invocation.");
+      },
+    }),
+  );
+  const res = await srv._registeredTools.get_tafsir_by_ayah.handler({ book_id: "8473", surah: 2, ayah: 255 });
+  const d = JSON.parse(res.content[0].text);
+  // Must not throw out of the handler, must not fabricate a passage, and
+  // must not silently claim verified/exact for content it never actually saw.
+  assert.equal(d.found, true, "the page location itself (from the static index) is still honestly reportable");
+  assert.equal(d.page, "721");
+  assert.equal(d.passage, undefined, "never fabricate passage text for a page we failed to fetch");
+  assert.equal(d.verified_on_page, false);
+  assert.deepEqual(d.verification, { status: "unverified", evidence: "platform_limit_before_verification" });
+  assert.equal(d.search_interrupted, true);
+  assert.ok(d.interruption_detail?.includes("subrequests"));
+  assert.equal(d.citation.url, "https://shamela.ws/book/8473/721");
+});
+
 test("get_tafsir_by_ayah refuses a stale static page when its ayah marker is absent", async () => {
   const fetched = [];
   const srv = createServer(
