@@ -18,12 +18,16 @@ on:
         default: "1681"
         required: false
       from:
-        description: "First hadith number"
-        default: "1"
+        description: "First hadith number (blank = next uncovered number)"
+        default: ""
         required: false
       to:
-        description: "Last hadith number (blank = edition's last_number)"
+        description: "Last hadith number (blank = bounded chunk from --from)"
         default: ""
+        required: false
+      chunk_size:
+        description: "Maximum hadith lookups in this run (1-1000)"
+        default: "100"
         required: false
       step:
         description: "Sample every Nth number (1 = full)"
@@ -67,60 +71,52 @@ jobs:
       - name: Offline quality gate
         run: npm run verify
 
-      # These broad canaries cover editions unrelated to the selected slice and
-      # may be rate-limited independently. Keep their diagnostics without
-      # allowing an unrelated transient 403 to cancel the authoritative build.
-      - name: Live citation and markup canaries (diagnostic)
-        id: live-canaries
-        continue-on-error: true
-        run: npm run test:live
-
-      - name: Verify canonical whitelist against live shamela.ws (diagnostic)
-        id: canonical-canaries
-        continue-on-error: true
-        run: node scripts/resolve-canonical-editions.mjs
-
-      - name: Compute checkpoint identity
-        id: checkpoint
+      # Keep this job's live request budget for the selected slice. Broad live
+      # canaries remain available through `npm run test:live` and
+      # `npm run resolve:canonical`, but must not run before an index build.
+      - name: Validate and compute bounded range
+        id: range
         env:
           BOOK: ${{ inputs.book || '1681' }}
-          FROM: ${{ inputs.from || '1' }}
-          TO: ${{ inputs.to || 'edition-end' }}
+          FROM: ${{ inputs.from }}
+          TO: ${{ inputs.to }}
+          CHUNK_SIZE: ${{ inputs.chunk_size || '100' }}
           STEP: ${{ inputs.step || '1' }}
-          TAFSIR: ${{ inputs.tafsir || 'none' }}
+          TAFSIR: ${{ inputs.tafsir }}
           TAFSIR_FROM: ${{ inputs.tafsir_from || '1' }}
           TAFSIR_TO: ${{ inputs.tafsir_to || '1000' }}
-        run: |
-          set -euo pipefail
-          for value in "$BOOK" "$FROM" "$STEP" "$TAFSIR_FROM" "$TAFSIR_TO"; do
-            [[ "$value" =~ ^[0-9]+$ ]] || { echo "Checkpoint identity inputs must be numeric" >&2; exit 1; }
-          done
-          [[ "$TO" == "edition-end" || "$TO" =~ ^[0-9]+$ ]] || { echo "Invalid hadith end" >&2; exit 1; }
-          [[ "$TAFSIR" == "none" || "$TAFSIR" =~ ^[0-9]+$ ]] || { echo "Invalid tafsir id" >&2; exit 1; }
-          echo "scope=hadith-${BOOK}-${FROM}-${TO}-${STEP}_tafsir-${TAFSIR}-${TAFSIR_FROM}-${TAFSIR_TO}" >> "$GITHUB_OUTPUT"
+        run: node scripts/plan-index-slice.mjs >> "$GITHUB_OUTPUT"
 
-      - name: Restore compatible resumable checkpoints
+      - name: Restore compatible hadith checkpoint
+        id: restore-hadith
+        if: ${{ steps.range.outputs.complete != 'true' }}
         uses: actions/cache/restore@v5.0.3
         with:
-          path: |
-            .hadith-index.checkpoint.json
-            .tafsir-index.checkpoint.json
-          key: citation-index-${{ steps.checkpoint.outputs.scope }}-${{ github.sha }}-${{ github.run_id }}
+          path: .hadith-index.checkpoint.json
+          key: citation-index-${{ steps.range.outputs.hadith_scope }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            citation-index-${{ steps.checkpoint.outputs.scope }}-${{ github.sha }}-
+            citation-index-${{ steps.range.outputs.hadith_scope }}-
 
-      - name: Build hadith index
-        if: ${{ github.event_name == 'schedule' || inputs.book != '' }}
+      - name: Restore compatible tafsir checkpoint
+        id: restore-tafsir
+        if: ${{ inputs.tafsir != '' }}
+        uses: actions/cache/restore@v5.0.3
+        with:
+          path: .tafsir-index.checkpoint.json
+          key: citation-index-${{ steps.range.outputs.tafsir_scope }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            citation-index-${{ steps.range.outputs.tafsir_scope }}-
+
+      - name: Build bounded hadith index slice
+        id: build-hadith
+        if: ${{ steps.range.outputs.complete != 'true' }}
         env:
-          BOOK: ${{ inputs.book || '1681' }}
-          FROM: ${{ inputs.from || '1' }}
-          TO: ${{ inputs.to }}
-          STEP: ${{ inputs.step || '1' }}
-        run: |
-          set -euo pipefail
-          args=(--book "$BOOK" "--from=$FROM" "--step=$STEP" --delay=400 --max-lookups=10000 --timeout=20000 --checkpoint=.hadith-index.checkpoint.json --resume)
-          if [ -n "$TO" ]; then args+=("--to=$TO"); fi
-          node scripts/build-hadith-index.mjs "${args[@]}"
+          BOOK: ${{ steps.range.outputs.book }}
+          FROM: ${{ steps.range.outputs.from }}
+          TO: ${{ steps.range.outputs.to }}
+          STEP: ${{ steps.range.outputs.step }}
+          MAX_LOOKUPS: ${{ steps.range.outputs.lookups }}
+        run: node scripts/build-hadith-index.mjs --book "$BOOK" --from="$FROM" --to="$TO" --step="$STEP" --delay=400 --max-lookups="$MAX_LOOKUPS" --timeout=20000 --checkpoint=.hadith-index.checkpoint.json --resume
 
       - name: Build bounded tafsir index slice
         if: ${{ inputs.tafsir != '' }}
@@ -130,33 +126,41 @@ jobs:
           TAFSIR_TO: ${{ inputs.tafsir_to || '1000' }}
         run: node scripts/build-tafsir-index.mjs --tafsir "$TAFSIR" --from="$TAFSIR_FROM" --to="$TAFSIR_TO" --max-pages=1000 --timeout=20000 --checkpoint=.tafsir-index.checkpoint.json --resume --delay=400
 
-      - name: Preserve resumable checkpoints for later runs
-        if: ${{ always() }}
+      - name: Preserve resumable hadith checkpoint
+        if: ${{ always() && steps.range.outputs.complete != 'true' && hashFiles('.hadith-index.checkpoint.json') != '' }}
         uses: actions/cache/save@v5.0.3
         with:
-          path: |
-            .hadith-index.checkpoint.json
-            .tafsir-index.checkpoint.json
-          key: citation-index-${{ steps.checkpoint.outputs.scope }}-${{ github.sha }}-${{ github.run_id }}
+          path: .hadith-index.checkpoint.json
+          key: citation-index-${{ steps.range.outputs.hadith_scope }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Preserve resumable tafsir checkpoint
+        if: ${{ always() && inputs.tafsir != '' && hashFiles('.tafsir-index.checkpoint.json') != '' }}
+        uses: actions/cache/save@v5.0.3
+        with:
+          path: .tafsir-index.checkpoint.json
+          key: citation-index-${{ steps.range.outputs.tafsir_scope }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload checkpoints for inspection
         if: ${{ always() }}
         uses: actions/upload-artifact@v6.0.0
         with:
-          name: citation-index-checkpoints-${{ github.run_id }}
+          name: citation-index-checkpoints-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: ignore
+          include-hidden-files: true
           path: |
             .hadith-index.checkpoint.json
             .tafsir-index.checkpoint.json
 
-      - name: Upstream diagnostic summary
+      - name: Refresh summary
         if: ${{ always() }}
         run: |
           {
-            echo "### Upstream diagnostics"
-            echo "- Live canaries: ${{ steps.live-canaries.outcome }}"
-            echo "- Canonical whitelist canaries: ${{ steps.canonical-canaries.outcome }}"
-            echo "- These checks are diagnostic; the selected index build remains authoritative."
+            echo "### Citation index refresh"
+            echo "- Hadith range: ${{ steps.range.outputs.book }} #${{ steps.range.outputs.from }}..${{ steps.range.outputs.to }} step ${{ steps.range.outputs.step }} (${{ steps.range.outputs.lookups }} lookups)"
+            echo "- Hadith checkpoint restored: ${{ steps.restore-hadith.outputs.cache-matched-key != '' }}"
+            echo "- Tafsir checkpoint restored: ${{ steps.restore-tafsir.outputs.cache-matched-key != '' }}"
+            echo "- Hadith build outcome: ${{ steps.build-hadith.outcome }}"
+            echo "- Broad live diagnostics are intentionally separate to preserve Shamela's request budget."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Validate generated index (schema, canonical ids, Quran bounds, regression)
@@ -179,7 +183,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v6.0.0
         with:
-          name: index-validation-report
+          name: index-validation-report-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: ignore
           path: reports/
 
@@ -192,6 +196,7 @@ jobs:
           body: |
             Automated by `.github/workflows/refresh-index.yml`. Machine-generated —
             requires manual review before merge.
+            - Hadith slice: `${{ steps.range.outputs.book }}` numbers `${{ steps.range.outputs.from }}..${{ steps.range.outputs.to }}` step `${{ steps.range.outputs.step }}`
             - `src/data/hadith-index.mjs` (merged, never truncated)
             - `src/data/tafsir-index.mjs` (surah ranges + ayah → page; merged)
             - `reports/index-validation.*` (schema, canonical id, Quran-bounds and
