@@ -1,7 +1,7 @@
 /**
  * Polite Shamela fetch wrapper: bounded concurrency, timeout, in-flight
  * de-duplication, isolate memory cache, optional Cloudflare Cache API, and
- * bounded retries for transient 429/503 responses only.
+ * bounded retries for configurable transient statuses (429/503 by default).
  */
 
 const DEFAULT_HEADERS = {
@@ -50,6 +50,7 @@ export function createHttp({
   timeoutMs = 20_000,
   maxCacheEntries = 500,
   maxRetries = 2,
+  retryStatuses = [429, 503],
   baseRetryMs = 500,
   maxRetryMs = 8_000,
   sleep = delay,
@@ -62,6 +63,11 @@ export function createHttp({
   const timeout = Number.isFinite(Number(timeoutMs)) ? Math.max(0, Number(timeoutMs)) : 20_000;
   const cacheLimit = Number.isFinite(Number(maxCacheEntries)) ? Math.max(0, Math.floor(Number(maxCacheEntries))) : 500;
   const retries = Number.isFinite(Number(maxRetries)) ? Math.max(0, Math.floor(Number(maxRetries))) : 2;
+  const retryableStatuses = new Set(
+    (retryStatuses && typeof retryStatuses[Symbol.iterator] === "function" ? [...retryStatuses] : [429, 503])
+      .map(Number)
+      .filter((status) => Number.isInteger(status) && status >= 400 && status <= 599),
+  );
   const retryBase = Math.max(0, Number(baseRetryMs) || 0);
   const retryCap = Math.max(retryBase, Number(maxRetryMs) || 0);
   const cache = new Map();
@@ -113,7 +119,7 @@ export function createHttp({
     for (let attempt = 0; attempt <= retries; attempt += 1) {
       response = await fetchAttempt(url, init);
       if (response.ok) break;
-      const transient = response.status === 429 || response.status === 503;
+      const transient = retryableStatuses.has(response.status);
       if (!transient || attempt === retries) throw new Error(`Shamela returned HTTP ${response.status}`);
       const explicit = retryAfterMs(response, now);
       const exponential = Math.min(retryCap, retryBase * 2 ** attempt);

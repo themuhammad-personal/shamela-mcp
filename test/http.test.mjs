@@ -109,6 +109,24 @@ test("retries only 429/503 with bounded Retry-After-aware delays", async () => {
   const forbidden = createHttp({ maxRetries: 5, fetchImpl: async () => ((forbiddenCalls += 1), new Response("no", { status: 403 })) });
   await assert.rejects(() => forbidden.text("https://shamela.ws/book/1/1"), /HTTP 403/);
   assert.equal(forbiddenCalls, 1);
+
+  const builderWaits = [];
+  let builderCalls = 0;
+  const builderPolicy = createHttp({
+    retryStatuses: [403, 429, 503],
+    maxRetries: 2,
+    baseRetryMs: 3_000,
+    maxRetryMs: 30_000,
+    random: () => 0,
+    sleep: async (ms) => builderWaits.push(ms),
+    fetchImpl: async () => {
+      builderCalls += 1;
+      return builderCalls < 3 ? new Response("throttled", { status: 403 }) : new Response("recovered");
+    },
+  });
+  assert.equal(await builderPolicy.text("https://shamela.ws/ajax/specialnumber2id/1681/2"), "recovered");
+  assert.equal(builderCalls, 3);
+  assert.deepEqual(builderWaits, [3000, 6000]);
 });
 
 test("Cloudflare Cache API stores successful GETs and ttl=0 bypasses it", async () => {

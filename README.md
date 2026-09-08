@@ -54,7 +54,7 @@ shamela hosts several editions of each collection; only one per work carries the
 - Book pages: `div.nass > p` main text, `p.hamesh` footnotes, `#fld_part_top` volume, `#fld_goto_top` printed page, `div.size-12` chapter path (parser: `src/lib/page.mjs`, tested on a real page in `test/fixtures/`)
 - A persisted hadith/tafsir index is only a location hint. Hadith results require the requested `N -` marker on the fetched page; exact tafsir results require the requested ayah marker on the fetched page. A stale or malformed index therefore produces `found: false`, not a borrowed passage.
 
-Politeness: per-isolate concurrency cap 4, 20 s timeout, 15-min in-memory and Cloudflare Cache API response caching, in-flight de-duplication, and bounded 429/503-only retries that honor `Retry-After`. Builders check `robots.txt`, default to delayed requests, enforce hard slice caps, and support `--checkpoint … --resume`; keep every live run narrow and never use this project for corpus mirroring or AI training.
+Politeness: per-isolate concurrency cap 4, 20 s timeout, 15-min in-memory and Cloudflare Cache API response caching, in-flight de-duplication, and bounded 429/503-only runtime retries that honor `Retry-After`. Offline builders additionally retry Shamela's transient throttling 403 with a longer capped backoff; they check `robots.txt`, default to delayed requests, enforce hard slice caps, and support `--checkpoint … --resume`. Keep every live run narrow and never use this project for corpus mirroring or AI training.
 
 Parsed book pages expose `narrator_links[]` with Shamela narrator IDs, names, URLs, and paragraph positions when the live HTML contains `/narrator/<id>` anchors. This is discovery evidence only: narrator reliability or hadith grading is never inferred from the link.
 
@@ -91,7 +91,7 @@ scripts/
 test/                              offline tests (node --test), incl. real-page fixture
 .github/workflows/
   deploy.yml                Node 22, npm ci, tests, dry-run, deploy on push to main
-  refresh-index.yml         manual/monthly: verify whitelist, build index, validate, health gate → PR
+  refresh-index.yml         manual/monthly: next bounded resumable index slice, validate, health gate → PR
 ```
 
 ## Development
@@ -103,8 +103,8 @@ npm run test:live              # explicit live citation + markup canaries
 npm run verify                 # tests + wrangler dry-run build (CI health gate)
 npm run dev                    # local wrangler dev
 npm run deploy                 # deploy (needs CLOUDFLARE_API_TOKEN or wrangler login)
-npm run resolve:canonical      # re-check canonical ids against live shamela.ws
-node scripts/build-hadith-index.mjs --book 1681 --from=1 --to=1000 --max-lookups=1000 --checkpoint=.hadith.json --resume
+npm run resolve:canonical      # separate live diagnostic; not run before refresh builds
+node scripts/build-hadith-index.mjs --book 1681 --from=1 --to=100 --max-lookups=100 --checkpoint=.hadith.json --resume
 npm run build:tafsir -- --tafsir 8473 --from=1 --to=1000 --max-pages=1000 --checkpoint=.tafsir.json --resume
 # Run further bounded slices deliberately; Muwatta 1699 is rejected because its numbering restarts per kitab.
 npm run validate:index         # offline: schema, canonical ids, Quran bounds, coverage-regression gate

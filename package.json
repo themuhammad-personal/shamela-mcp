@@ -16,7 +16,7 @@
     "build:tafsir": "node scripts/build-tafsir-index.mjs",
     "validate:index": "node scripts/validate-index.mjs",
     "refresh:orchestrate": "node scripts/orchestrate-refresh.mjs",
-    "verify": "npm test"
+    "verify": "npm test && wrangler deploy --dry-run"
   },
   "license": "MIT",
   "dependencies": {

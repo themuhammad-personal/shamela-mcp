@@ -41,7 +41,7 @@ import { AYAH_COUNTS, surahHeadingInParagraph, quranBracketAyahsInParagraph } fr
 import { surahStartsFromToc, surahRangesFromStarts } from "../src/lib/hadith-index.mjs";
 import existing from "../src/data/tafsir-index.mjs";
 import canonicalBookIds from "../src/data/canonical-book-ids.mjs";
-import { assertRobotsAllowed, checkpointMatches, readCheckpoint, writeCheckpoint } from "./lib/crawl-policy.mjs";
+import { assertRobotsAllowed, checkpointMatches, readCheckpoint, resetCheckpoint, writeCheckpoint } from "./lib/crawl-policy.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const OUT_PATH = resolve(__dirname, "../src/data/tafsir-index.mjs");
@@ -115,7 +115,14 @@ if (DRY_RUN) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 await assertRobotsAllowed();
-const http = createHttp({ ttl: 0, timeoutMs: TIMEOUT_MS, maxRetries: 3 });
+const http = createHttp({
+  ttl: 0,
+  timeoutMs: TIMEOUT_MS,
+  maxRetries: 4,
+  retryStatuses: [403, 429, 503],
+  baseRetryMs: 3_000,
+  maxRetryMs: 30_000,
+});
 const client = createClient({ text: http.text });
 const index = { generated_at: new Date().toISOString(), books: { ...(existing?.books ?? {}) } };
 let touched = 0;
@@ -362,7 +369,8 @@ if (failedTarget) {
   process.exit(1);
 }
 if (!touched && !FORCE) {
-  console.log("✔ Nothing changed — existing index is already current; nothing to write.");
+  resetCheckpoint(CHECKPOINT_PATH);
+  console.log("✔ Nothing changed — existing index is already current; checkpoint cleared.");
   process.exit(0);
 }
 if (DRY_RUN) {
@@ -390,4 +398,5 @@ writeFileSync(
 export default ${JSON.stringify(index, null, 1)};
 `,
 );
-console.log(`✔ Wrote ${OUT_PATH}`);
+resetCheckpoint(CHECKPOINT_PATH);
+console.log(`✔ Wrote ${OUT_PATH}; completed checkpoint cleared`);
