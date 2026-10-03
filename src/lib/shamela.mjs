@@ -180,7 +180,9 @@ export function createClient({ base = DEFAULT_BASE, text, maxCachedDetails = 200
 
   async function titleSearch(query, page, limit) {
     const normalizedQuery = normalizeArabic(query);
-    const raw = await text(`${base}/ajax/book/?term=${encodeURIComponent(normalizedQuery || query)}`);
+    // Send the query as typed: shamela normalises server-side itself, and
+    // pre-normalising here (إحياء → احياا) makes /ajax/book return zero hits.
+    const raw = await text(`${base}/ajax/book/?term=${encodeURIComponent(query)}`);
     let items = [];
     try {
       items = JSON.parse(raw).results?.items || [];
